@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Second Hand Smoke</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark" aria-hidden="true">CF</span>
+    <span class="brand-lockup">
+      <span class="brand-text">Second Hand Smoke</span>
+      <span class="brand-sub">Second Hand Smoke</span>
+      <span class="brand-pub">A <b>CnF Works</b> Project</span>
+    </span>
+  </div>
+  <div class="rule" id="dayRule">No shoot day selected</div>
+  <div class="steps" id="stepTracker"></div>
+</header>
+
+<main>
+  <div class="col">
+
+    <section class="panel">
+      <h2><span class="num">1</span>Shoot day</h2>
+      <div id="daySwitch" class="chips"></div>
+      <div class="field-row">
+        <input id="dayProject" placeholder="Project" value="PROJECT_01">
+        <input id="dayName" placeholder="DAY_01">
+        <input id="dayDate" type="date">
+      </div>
+      <button class="btn" onclick="createDay()">Start day</button>
+    </section>
+
+    <section class="panel accent-dest">
+      <h2><span class="num">2</span>Destinations — 2 drives + cloud</h2>
+      <p class="note" id="destNote"></p>
+      <div class="dest-slots" id="destSlots"></div>
+      <p class="note" style="margin:0 0 6px">Add another destination (advanced):</p>
+      <div class="field-row">
+        <input id="destPath" placeholder="/Volumes/CRACK_A or a synced cloud folder">
+        <input id="destLabel" placeholder="Label" style="max-width:120px">
+        <select id="destRole">
+          <option value="primary">primary</option>
+          <option value="backup" selected>backup</option>
+          <option value="offsite">cloud / offsite</option>
+        </select>
+      </div>
+      <button class="btn ghost" onclick="addDest()">Add destination</button>
+    </section>
+
+    <section class="panel accent-cards">
+      <h2><span class="num">3</span>Card in the reader</h2>
+      <p class="note">Scanning <code id="scanRoot">/Volumes</code></p>
+      <button class="btn" onclick="scan()" style="margin-bottom:12px">Scan for cards</button>
+      <div id="scanList"><p class="empty">Insert a card and scan.</p></div>
+    </section>
+
+  </div>
+
+  <div class="col">
+
+    <section class="panel" id="jobPanel" hidden>
+      <h2>Active job</h2>
+      <div class="job-file" id="jobFile"></div>
+      <div class="bar"><div class="bar-fill" id="jobFill"></div></div>
+      <div class="job-meta">
+        <span id="jobPhase"></span>
+        <span id="jobPct">0%</span>
+      </div>
+      <div class="job-meta">
+        <span id="jobBytes"></span>
+        <span id="jobFiles"></span>
+      </div>
+      <div id="jobErrors" class="errors"></div>
+      <button class="btn ghost" id="cancelButton" onclick="cancelJob()">Stop safely</button>
+    </section>
+
+    <section class="panel accent-sync" id="syncPanel">
+      <h2><span class="num">4</span>Sync day's footage</h2>
+      <div class="status-line idle" id="syncState"><span class="lamp"></span>
+        <span class="text">Start a shoot day to calculate sync.</span></div>
+      <p class="note" id="syncDetail">Relationships only · originals and proxies untouched</p>
+      <button class="btn sync" id="syncButton" onclick="syncDay()" disabled>Sync day's footage</button>
+      <button class="btn waveform" id="waveformButton" onclick="waveformDay()" disabled>Waveform fallback</button>
+    </section>
+
+    <section class="panel accent-cards" id="proxyPanel">
+      <h2><span class="num">5</span>Proxies</h2>
+      <div class="status-line idle" id="proxyDayState"><span class="lamp"></span>
+        <span class="text">Start a shoot day to build proxies.</span></div>
+      <p class="note" id="proxyDayDetail">ProRes Proxy 1080p · relink-safe · originals untouched</p>
+      <button class="btn proxy" id="proxyAllButton" onclick="buildAllProxies()" disabled>Build all proxies</button>
+      <button class="btn ghost" id="proxyStopButton" onclick="stopProxyQueue()" hidden>Stop after this card</button>
+    </section>
+
+    <section class="panel accent-handoff" id="handoffPanel">
+      <h2><span class="num">6</span>Editorial handoff</h2>
+      <div class="status-line idle" id="handoffState"><span class="lamp"></span>
+        <span class="text">Start a shoot day to build a handoff.</span></div>
+      <p class="note" id="handoffDetail">Resolve timeline · ALE · relink manifest · review dailies</p>
+      <button class="btn handoff" id="handoffButton" onclick="buildHandoff(false)" disabled>Build Resolve handoff</button>
+      <button class="btn ghost" id="handoffRebuild" onclick="buildHandoff(true)" hidden>Rebuild handoff</button>
+      <button class="btn ghost" id="handoffNotes" onclick="openHandoffNotes()" hidden>Open handoff notes</button>
+    </section>
+
+    <section class="panel">
+      <h2>Cards on this day</h2>
+      <div id="cardList"><p class="empty">Nothing registered yet.</p></div>
+    </section>
+
+  </div>
+</main>
+
+<div id="browseModal" class="modal-backdrop" hidden onclick="if(event.target===this)closeBrowse()">
+  <div class="modal">
+    <div class="modal-head">
+      <span id="browseTitle">Choose a folder</span>
+      <button class="btn ghost sm" onclick="closeBrowse()">Close</button>
+    </div>
+    <div class="modal-jumps">
+      <button class="btn ghost sm" onclick="browseTo('volumes')">Drives</button>
+      <button class="btn ghost sm" onclick="browseTo('home')">Home</button>
+      <button class="btn ghost sm" id="browseUp" onclick="browseUp()">Up</button>
+    </div>
+    <div class="modal-path" id="browsePath"></div>
+    <div class="modal-list" id="browseList"></div>
+    <div class="modal-actions">
+      <button class="btn go" onclick="chooseCurrentFolder()">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+
+<script>window.MIN_COPIES = {{ min_copies }};</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
