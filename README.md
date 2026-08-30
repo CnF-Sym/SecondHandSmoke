@@ -1,3 +1,5 @@
+<img src="assets/logo.png" alt="Second Hand Smoke" width="420">
+
 # Second Hand Smoke
 
 *Verified card offload for camera and sound media. A CnF Works Project.*
@@ -467,6 +469,8 @@ out of scope.
 | `Make Second Hand Smoke DMG.command` | Double-clickable release build |
 | `push.command` | Double-clickable git commit and push |
 | `ROADMAP.md` | Where this is going, and what it will never do |
+| `assets/` | The wordmark and application icon |
+| `macos/AppIcon.icns` | The application icon, in the format macOS wants |
 | `LICENSE` | GPL-3.0 |
 
 Run the tests any time you change something:

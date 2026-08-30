@@ -1633,5 +1633,57 @@ else:
 check("the HTML day report still renders after the split",
       c.get(f"/api/day/{day_id}/report").status_code == 200)
 
+print("\n[24] branding assets")
+
+import struct
+
+for name in sorted(application.BRAND_ASSETS):
+    check(f"{name} is present in assets/",
+          os.path.isfile(os.path.join("assets", name)))
+    response = c.get(f"/static/brand/{name}")
+    check(f"{name} is served",
+          response.status_code == 200 and response.data[:8] == b"\x89PNG\r\n\x1a\n",
+          response.status_code)
+
+# The route is an allow-list, not a folder. A web server on a machine full of
+# other people's footage does not get to serve whatever it is asked for.
+check("the brand route refuses anything not on the allow-list",
+      c.get("/static/brand/app.py").status_code == 404)
+check("the brand route cannot be walked out of",
+      c.get("/static/brand/..%2fapp.py").status_code in (404, 400))
+
+icns = "macos/AppIcon.icns"
+check("the app icon is a real icns container",
+      os.path.isfile(icns) and open(icns, "rb").read(4) == b"icns")
+if os.path.isfile(icns):
+    with open(icns, "rb") as handle:
+        blob = handle.read()
+    declared = struct.unpack(">I", blob[4:8])[0]
+    check("the icns length header matches the file", declared == len(blob),
+          f"{declared} vs {len(blob)}")
+    # The Dock, the Finder and the DMG all pick different sizes out of this.
+    present = set()
+    offset = 8
+    while offset + 8 <= len(blob):
+        kind = blob[offset:offset + 4].decode("ascii", "replace")
+        length = struct.unpack(">I", blob[offset + 4:offset + 8])[0]
+        if length < 8:
+            break
+        present.add(kind)
+        offset += length
+    check("the icns carries the sizes macOS asks for",
+          {"ic10", "ic09", "ic08", "ic07", "icp5", "icp4"} <= present,
+          ", ".join(sorted(present)))
+
+spec_text = open("SecondHandSmoke.spec", encoding="utf-8").read()
+check("every served branding asset is bundled into the application",
+      all(f"('assets/{name}', 'assets')" in spec_text
+          for name in application.BRAND_ASSETS),
+      ", ".join(sorted(application.BRAND_ASSETS)))
+check("the source artwork is not shipped inside the application",
+      "assets/source" not in spec_text)
+check("the build script picks up the app icon",
+      "AppIcon.icns" in open("macos/build_macos_app.sh", encoding="utf-8").read())
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

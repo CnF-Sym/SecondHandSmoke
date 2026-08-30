@@ -46,6 +46,7 @@ import waveform
 # Inside the packaged application the interface files are unpacked beside the
 # frozen modules rather than sitting next to this source file.
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 app = Flask(__name__, template_folder=BASE_DIR, static_folder=None)
 
 try:
@@ -230,6 +231,19 @@ def app_css():
 @app.get("/static/app.js")
 def app_js():
     return send_from_directory(BASE_DIR, "app.js", mimetype="application/javascript")
+
+
+# An allow-list rather than a folder: this is a web server on a machine full of
+# other people's footage, and "serve whatever is named" is how that stops being
+# true.
+BRAND_ASSETS = {"logo.png", "icon.png", "icon-192.png"}
+
+
+@app.get("/static/brand/<name>")
+def brand_asset(name):
+    if name not in BRAND_ASSETS:
+        return Response("Unknown asset.\n", status=404, mimetype="text/plain")
+    return send_from_directory(ASSETS_DIR, name, mimetype="image/png")
 
 
 # --------------------------------------------------------------------------

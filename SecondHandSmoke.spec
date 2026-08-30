@@ -22,6 +22,11 @@ a = Analysis(
         ('app.js', '.'),
         # Read by version.py, and therefore present in every MHL manifest this
         # build writes.
+        # The three files the interface serves, not the folder: the source
+        # artwork beside them is several megabytes nobody needs inside the app.
+        ('assets/logo.png', 'assets'),
+        ('assets/icon.png', 'assets'),
+        ('assets/icon-192.png', 'assets'),
         ('VERSION', '.'),
         # GPL-3.0 requires the licence text to travel with the binary.
         ('LICENSE', '.'),
