@@ -324,6 +324,20 @@ def conn():
     return c
 
 
+def setting(key, value=None):
+    """Read or write one persistent preference.
+
+    Lives here rather than in app.py because the report writers need branding
+    settings and must not import the web layer to get them.
+    """
+    if value is None:
+        row = q1("SELECT value FROM settings WHERE key=?", (key,))
+        return row["value"] if row else None
+    ex("INSERT INTO settings (key,value) VALUES (?,?) "
+       "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    return value
+
+
 def init():
     conn().executescript(SCHEMA)
     _add_column("destinations", "canonical_path", "TEXT")

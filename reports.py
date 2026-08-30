@@ -356,42 +356,200 @@ def display_codec(value):
     }.get(value, value or "")
 
 
-def day_report(day_id):
+# The report is gathered once and rendered more than once.
+#
+# The HTML report and the PDF report have to agree about whether a card is safe
+# to format. The only way to guarantee that is for them not to be two paths at
+# all: day_data() does every query, and each renderer is handed the result. A
+# renderer cannot reach the database, so it cannot form its own opinion, and a
+# PDF that says SAFE TO FORMAT is quoting the same card_status() call the HTML
+# quoted, from the same dict, in the same call.
+
+_MEDIA_SQL = """SELECT f.rel_path, f.category, m.*,
+                       p.state proxy_status, p.output_path proxy_path,
+                       p.error proxy_error
+                FROM files f LEFT JOIN media_metadata m ON m.file_id=f.id
+                LEFT JOIN proxies p ON p.file_id=f.id
+                WHERE f.card_id=? AND f.category IN ('video','audio')
+                ORDER BY f.rel_path"""
+
+_SYNC_SQL = """SELECT f.rel_path camera_path, s.status, s.method, s.error,
+                      l.offset_seconds, l.overlap_seconds,
+                      sf.rel_path sound_path, sm.scene, sm.take_name
+               FROM files f
+               LEFT JOIN sync_status s ON s.camera_file_id=f.id
+               LEFT JOIN sync_links l ON l.camera_file_id=f.id
+               LEFT JOIN files sf ON sf.id=l.sound_file_id
+               LEFT JOIN media_metadata sm ON sm.file_id=sf.id
+               WHERE f.card_id=? AND f.category='video'
+               ORDER BY f.rel_path,l.sound_start_seconds,sf.rel_path"""
+
+_WAVEFORM_SQL = """SELECT f.rel_path camera_path,w.state,w.score,w.margin,
+                          w.offset_seconds,w.overlap_seconds,w.error,
+                          sf.rel_path sound_path,sm.scene,sm.take_name
+                   FROM waveform_results w JOIN files f ON f.id=w.camera_file_id
+                   LEFT JOIN files sf ON sf.id=w.best_sound_file_id
+                   LEFT JOIN media_metadata sm ON sm.file_id=sf.id
+                   WHERE f.card_id=? ORDER BY f.rel_path"""
+
+
+def gate_stamp(gate):
+    """The words that go on the paperwork, and nothing else decides them.
+
+    Both report renderers call this. A PDF that disagrees with the HTML about
+    whether a card can be formatted is the one bug this whole program exists to
+    prevent, so the sentence itself has one definition too, not just the data
+    behind it.
+    """
+    return ("SAFE TO FORMAT", True) if gate["safe"] else ("DO NOT FORMAT", False)
+
+
+def _dicts(result):
+    return [dict(row) for row in result]
+
+
+def day_data(day_id):
+    """Gather everything any report needs, in one pass, from one place.
+
+    Returns None for a shoot day that does not exist. Every verification fact
+    in here — the gate verdict, the per-destination copy state — is read once
+    and handed to whichever renderer wants it. Nothing downstream queries the
+    catalog again.
+    """
     day = db.q1("SELECT * FROM days WHERE id=?", (day_id,))
-    dests = db.q("""SELECT * FROM destinations WHERE day_id=?
-                    ORDER BY CASE role WHEN 'primary' THEN 0 ELSE 1 END, id""", (day_id,))
-    cards = db.q("SELECT * FROM cards WHERE day_id=? ORDER BY label", (day_id,))
+    if not day:
+        return None
+
+    dests = _dicts(db.q("""SELECT * FROM destinations WHERE day_id=?
+                           ORDER BY CASE role WHEN 'primary' THEN 0 ELSE 1 END, id""",
+                        (day_id,)))
+
+    duration_totals = dict(db.q1("""SELECT
+        SUM(CASE WHEN c.kind IN ('camera','mixed') AND f.category='video'
+                 THEN m.duration_seconds ELSE 0 END) camera_seconds,
+        SUM(CASE WHEN c.kind IN ('sound','mixed') AND f.category='audio'
+                 THEN m.duration_seconds ELSE 0 END) sound_seconds
+        FROM cards c JOIN files f ON f.card_id=c.id
+        LEFT JOIN media_metadata m ON m.file_id=f.id WHERE c.day_id=?""", (day_id,)))
+    proxy_totals = dict(db.q1("""SELECT COUNT(*) total,
+        SUM(CASE WHEN p.state='ready' THEN 1 ELSE 0 END) ready,
+        SUM(CASE WHEN p.state IN ('failed','cancelled') THEN 1 ELSE 0 END) problems,
+        SUM(CASE WHEN p.state='ready' THEN p.output_size ELSE 0 END) output_bytes
+        FROM cards c JOIN files f ON f.card_id=c.id
+        LEFT JOIN proxies p ON p.file_id=f.id
+        WHERE c.day_id=? AND f.category='video'""", (day_id,)))
+
+    cards = []
+    grand_files = grand_bytes = 0
+    for row in db.q("SELECT * FROM cards WHERE day_id=? ORDER BY label", (day_id,)):
+        card = dict(row)
+        files = _dicts(db.q("SELECT * FROM files WHERE card_id=? ORDER BY rel_path",
+                            (card["id"],)))
+        grand_files += len(files)
+        grand_bytes += card["total_bytes"]
+
+        copy_state = {}
+        for f in files:
+            for d in dests:
+                state = db.q1("SELECT state FROM copies WHERE file_id=? AND destination_id=?",
+                              (f["id"], d["id"]))
+                copy_state[(f["id"], d["id"])] = state["state"] if state else "—"
+
+        cards.append({
+            "card": card,
+            # The format gate, quoted once. No renderer decides this.
+            "gate": card_status(card["id"]),
+            "files": files,
+            "copy_state": copy_state,
+            "media": _dicts(db.q(_MEDIA_SQL, (card["id"],))),
+            "sync": _dicts(db.q(_SYNC_SQL, (card["id"],))),
+            "waveform": _dicts(db.q(_WAVEFORM_SQL, (card["id"],))),
+        })
+
+    return {
+        "day": dict(day),
+        "destinations": dests,
+        "cards": cards,
+        "generated": db.now(),
+        "tool": version.TOOL_STRING,
+        "support_email": version.SUPPORT_EMAIL,
+        "project_url": version.PROJECT_URL,
+        "totals": {
+            "files": grand_files,
+            "bytes": grand_bytes,
+            "duration": duration_totals,
+            "proxy": proxy_totals,
+            "sync": sync.day_summary(day_id),
+            "waveform": waveform.day_summary(day_id),
+            "handoff": handoff.day_summary(day_id),
+        },
+    }
+
+
+def summary_line(data):
+    """The one-line day summary, shared by every renderer."""
+    totals = data["totals"]
+    duration_totals = totals["duration"]
+    proxy_totals = totals["proxy"]
+    sync_totals = totals["sync"]
+    waveform_totals = totals["waveform"]
+    handoff_totals = totals["handoff"]
+
+    proxy_status = f"proxies {proxy_totals['ready'] or 0}/{proxy_totals['total'] or 0}"
+    if proxy_totals["output_bytes"]:
+        proxy_status += f" ({human_bytes(proxy_totals['output_bytes'])})"
+    if proxy_totals["problems"]:
+        proxy_status += f" · {proxy_totals['problems']} problem(s)"
+
+    if not sync_totals["total"]:
+        sync_status = "sync no camera clips"
+    elif not sync_totals["analyzed"]:
+        sync_status = f"sync not run ({sync_totals['total']} camera clips)"
+    else:
+        synced = sync_totals["matched"] + sync_totals["multiple"]
+        needs_attention = (sync_totals["ambiguous"] + sync_totals["review"]
+                           + sync_totals["unmatched"] + sync_totals["invalid"])
+        sync_status = f"sync {synced}/{sync_totals['total']}"
+        if needs_attention:
+            sync_status += f" · {needs_attention} need attention"
+
+    handoff_status = (f"handoff {handoff_totals['ready']}/{handoff_totals['total']}"
+                      if handoff_totals["state"] != "not_built" else "handoff not built")
+    if handoff_totals["unresolved"]:
+        handoff_status += f" · {handoff_totals['unresolved']} sync review"
+
+    return [
+        f"{len(data['cards'])} cards",
+        f"{totals['files']} files",
+        f"{human_bytes(totals['bytes'])} total",
+        f"camera {human_duration(duration_totals['camera_seconds'])}",
+        f"sound {human_duration(duration_totals['sound_seconds'])}",
+        proxy_status,
+        sync_status,
+        f"waveform {waveform_totals['matched']}/{waveform_totals['analyzed']} accepted · "
+        f"{waveform_totals['confirmed']} TC confirmed",
+        handoff_status,
+    ]
+
+
+def render_html(data):
+    """The day report as HTML. Reads only from day_data()."""
+    day = data["day"]
+    dests = data["destinations"]
 
     e = lambda s: html.escape(str(s if s is not None else ""))
     p = [f"<!doctype html><meta charset=utf-8><title>{e(day['name'])} ingest report</title>",
          f"<style>{REPORT_CSS}</style>",
          f"<h1>{e(day['project'])} &middot; {e(day['name'])}</h1>",
          f"<div class=sub>Shoot date {e(day['shoot_date'])} &nbsp;·&nbsp; "
-         f"report generated {e(db.now())}</div>"]
+         f"report generated {e(data['generated'])}</div>"]
 
     p.append("<h2>Destinations</h2><table><tr><th>Label</th><th>Role</th><th>Path</th></tr>")
     for d in dests:
         p.append(f"<tr><td>{e(d['label'])}</td><td>{e(d['role'])}</td><td>{e(d['path'])}</td></tr>")
     p.append("</table>")
 
-    grand_files = grand_bytes = 0
-    duration_totals = db.q1("""SELECT
-        SUM(CASE WHEN c.kind IN ('camera','mixed') AND f.category='video'
-                 THEN m.duration_seconds ELSE 0 END) camera_seconds,
-        SUM(CASE WHEN c.kind IN ('sound','mixed') AND f.category='audio'
-                 THEN m.duration_seconds ELSE 0 END) sound_seconds
-        FROM cards c JOIN files f ON f.card_id=c.id
-        LEFT JOIN media_metadata m ON m.file_id=f.id WHERE c.day_id=?""", (day_id,))
-    proxy_totals = db.q1("""SELECT COUNT(*) total,
-        SUM(CASE WHEN p.state='ready' THEN 1 ELSE 0 END) ready,
-        SUM(CASE WHEN p.state IN ('failed','cancelled') THEN 1 ELSE 0 END) problems,
-        SUM(CASE WHEN p.state='ready' THEN p.output_size ELSE 0 END) output_bytes
-        FROM cards c JOIN files f ON f.card_id=c.id
-        LEFT JOIN proxies p ON p.file_id=f.id
-        WHERE c.day_id=? AND f.category='video'""", (day_id,))
-    sync_totals = sync.day_summary(day_id)
-    waveform_totals = waveform.day_summary(day_id)
-    handoff_totals = handoff.day_summary(day_id)
+    handoff_totals = data["totals"]["handoff"]
     p.append("<h2>Editorial handoff</h2>")
     handoff_class = ("ok" if handoff_totals["package_ready"] and
                      not handoff_totals["unresolved"] else
@@ -405,24 +563,19 @@ def day_report(day_id):
              f"<td>{handoff_totals['ready']}/{handoff_totals['total']}</td>"
              f"<td>{handoff_totals['unresolved']}</td>"
              f"<td>{e(handoff_path)}</td></tr></table>")
-    for c in cards:
-        st = card_status(c["id"])
-        files = db.q("SELECT * FROM files WHERE card_id=? ORDER BY rel_path", (c["id"],))
-        grand_files += len(files)
-        grand_bytes += c["total_bytes"]
-        stamp = ("<div class=stamp>SAFE TO FORMAT</div>" if st["safe"]
-                 else "<div class='stamp bad'>DO NOT FORMAT</div>")
+
+    for entry in data["cards"]:
+        c = entry["card"]
+        st = entry["gate"]
+        files = entry["files"]
+        label, safe = gate_stamp(st)
+        stamp = (f"<div class=stamp>{label}</div>" if safe
+                 else f"<div class='stamp bad'>{label}</div>")
         p.append(f"<h2>Card {e(c['roll'] or c['label'])} &middot; {e(c['kind'])}</h2>")
         p.append(stamp + f"<div class=sub>{e(st['reason'])} &nbsp;·&nbsp; "
                          f"{len(files)} files &nbsp;·&nbsp; {human_bytes(c['total_bytes'])}</div>")
 
-        media_rows = db.q("""SELECT f.rel_path, f.category, m.*,
-                                     p.state proxy_status, p.output_path proxy_path,
-                                     p.error proxy_error
-                              FROM files f LEFT JOIN media_metadata m ON m.file_id=f.id
-                              LEFT JOIN proxies p ON p.file_id=f.id
-                              WHERE f.card_id=? AND f.category IN ('video','audio')
-                              ORDER BY f.rel_path""", (c["id"],))
+        media_rows = entry["media"]
         if media_rows:
             p.append("<table class=media><tr><th>Media</th><th>Scene / Take</th><th>Duration</th>"
                      "<th>Start TC</th><th>Format</th><th>Audio</th><th>Metadata</th>"
@@ -476,17 +629,7 @@ def day_report(day_id):
                 )
             p.append("</table>")
 
-        sync_rows = db.q("""SELECT f.rel_path camera_path, s.status, s.method, s.error,
-                                     l.offset_seconds, l.overlap_seconds,
-                                     sf.rel_path sound_path, sm.scene, sm.take_name
-                              FROM files f
-                              LEFT JOIN sync_status s ON s.camera_file_id=f.id
-                              LEFT JOIN sync_links l ON l.camera_file_id=f.id
-                              LEFT JOIN files sf ON sf.id=l.sound_file_id
-                              LEFT JOIN media_metadata sm ON sm.file_id=sf.id
-                              WHERE f.card_id=? AND f.category='video'
-                              ORDER BY f.rel_path,l.sound_start_seconds,sf.rel_path""",
-                           (c["id"],))
+        sync_rows = entry["sync"]
         if sync_rows:
             p.append("<h2>Camera / sound sync</h2>")
             p.append("<table class=sync><tr><th>Camera</th><th>Status</th><th>Sound</th>"
@@ -515,15 +658,7 @@ def day_report(day_id):
                 )
             p.append("</table>")
 
-        waveform_rows = db.q(
-            """SELECT f.rel_path camera_path,w.state,w.score,w.margin,
-                      w.offset_seconds,w.overlap_seconds,w.error,
-                      sf.rel_path sound_path,sm.scene,sm.take_name
-               FROM waveform_results w JOIN files f ON f.id=w.camera_file_id
-               LEFT JOIN files sf ON sf.id=w.best_sound_file_id
-               LEFT JOIN media_metadata sm ON sm.file_id=sf.id
-               WHERE f.card_id=? ORDER BY f.rel_path""", (c["id"],)
-        )
+        waveform_rows = entry["waveform"]
         if waveform_rows:
             p.append("<h2>Waveform fallback</h2>")
             p.append("<table class=waveform><tr><th>Camera</th><th>Result</th>"
@@ -559,9 +694,7 @@ def day_report(day_id):
         for f in files:
             cells = ""
             for d in dests:
-                row = db.q1("SELECT state FROM copies WHERE file_id=? AND destination_id=?",
-                            (f["id"], d["id"]))
-                s = row["state"] if row else "—"
+                s = entry["copy_state"][(f["id"], d["id"])]
                 cls = "ok" if s == "verified" else ("bad" if s in ("failed", "—") else "")
                 cells += f"<td class='{cls}'>{e(s)}</td>"
             p.append(f"<tr><td>{e(f['rel_path'])}</td>"
@@ -569,52 +702,36 @@ def day_report(day_id):
                      f"<td class=hash>{e(f['src_hash'])}</td>{cells}</tr>")
         p.append("</table>")
 
-    camera_duration = human_duration(duration_totals["camera_seconds"])
-    sound_duration = human_duration(duration_totals["sound_seconds"])
-    proxy_status = f"proxies {proxy_totals['ready'] or 0}/{proxy_totals['total'] or 0}"
-    if proxy_totals["output_bytes"]:
-        proxy_status += f" ({human_bytes(proxy_totals['output_bytes'])})"
-    if proxy_totals["problems"]:
-        proxy_status += f" · {proxy_totals['problems']} problem(s)"
-    synced = sync_totals["matched"] + sync_totals["multiple"]
-    if not sync_totals["total"]:
-        sync_status = "sync no camera clips"
-    elif not sync_totals["analyzed"]:
-        sync_status = f"sync not run ({sync_totals['total']} camera clips)"
-    else:
-        needs_attention = (sync_totals["ambiguous"] + sync_totals["review"]
-                           + sync_totals["unmatched"] + sync_totals["invalid"])
-        sync_status = f"sync {synced}/{sync_totals['total']}"
-        if needs_attention:
-            sync_status += f" · {needs_attention} need attention"
-    handoff_status = (f"handoff {handoff_totals['ready']}/{handoff_totals['total']}"
-                      if handoff_totals["state"] != "not_built" else "handoff not built")
-    if handoff_totals["unresolved"]:
-        handoff_status += f" · {handoff_totals['unresolved']} sync review"
-    p.insert(4, f"<div class=sub>{len(cards)} cards &nbsp;·&nbsp; {grand_files} files "
-                f"&nbsp;·&nbsp; {human_bytes(grand_bytes)} total &nbsp;·&nbsp; "
-                f"camera {camera_duration} &nbsp;·&nbsp; sound {sound_duration} "
-                f"&nbsp;·&nbsp; {proxy_status} &nbsp;·&nbsp; {sync_status} "
-                f"&nbsp;·&nbsp; waveform {waveform_totals['matched']}/"
-                f"{waveform_totals['analyzed']} accepted · "
-                f"{waveform_totals['confirmed']} TC confirmed &nbsp;·&nbsp; "
-                f"{handoff_status}</div>")
+    p.insert(4, "<div class=sub>" + " &nbsp;·&nbsp; ".join(summary_line(data)) + "</div>")
 
     # This document gets emailed to producers and post houses by people who
     # were not in the room when it was made. It has to say what wrote it and
     # who to ask about it.
-    p.append(f"<div class=foot>Generated by {e(version.TOOL_STRING)} "
+    p.append(f"<div class=foot>Generated by {e(data['tool'])} "
              f"&nbsp;·&nbsp; free software under the GNU GPL v3.0 "
              f"&nbsp;·&nbsp; questions about this report: "
-             f"<a href='mailto:{e(version.SUPPORT_EMAIL)}'>"
-             f"{e(version.SUPPORT_EMAIL)}</a> "
-             f"&nbsp;·&nbsp; <a href='{e(version.PROJECT_URL)}'>"
-             f"{e(version.PROJECT_URL)}</a></div>")
+             f"<a href='mailto:{e(data['support_email'])}'>"
+             f"{e(data['support_email'])}</a> "
+             f"&nbsp;·&nbsp; <a href='{e(data['project_url'])}'>"
+             f"{e(data['project_url'])}</a></div>")
 
-    day_dir = os.path.join(dests[0]["path"], day["project"], day["name"], "REPORTS") \
-        if dests else os.path.expanduser("~/SecondHandSmoke/reports")
-    os.makedirs(day_dir, exist_ok=True)
-    out = os.path.join(day_dir, f"ingest_{day['name']}.html")
+    return "\n".join(p)
+
+
+def report_dir(data):
+    dests = data["destinations"]
+    day = data["day"]
+    folder = (os.path.join(dests[0]["path"], day["project"], day["name"], "REPORTS")
+              if dests else os.path.expanduser("~/SecondHandSmoke/reports"))
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def day_report(day_id):
+    """The HTML day report. Written to disk and returned."""
+    data = day_data(day_id)
+    body = render_html(data)
+    out = os.path.join(report_dir(data), f"ingest_{data['day']['name']}.html")
     with open(out, "w", encoding="utf-8") as fh:
-        fh.write("\n".join(p))
-    return out, "\n".join(p)
+        fh.write(body)
+    return out, body
