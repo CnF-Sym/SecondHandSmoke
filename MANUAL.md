@@ -904,6 +904,23 @@ An unreadable `VERSION` file does not stop an offload. It marks the manifest as
 coming from an unidentified build, which is visible in the paperwork rather
 than silently wrong.
 
+### `toolpaths.py` — finding ffmpeg and ffprobe
+
+| Function | Purpose |
+|---|---|
+| `find(name, override_var)` | Override, then `PATH`, then the fallback directories |
+| `ffmpeg()` / `ffprobe()` | The two tools, honouring `DIT_FFMPEG` / `DIT_FFPROBE` |
+| `FALLBACK_DIRS` | Homebrew (both architectures), MacPorts, `/usr/bin`, `/bin` |
+
+`PATH` differs by launch mode. A shell inherits the login shell's `PATH`, which
+normally includes `/opt/homebrew/bin`. An application launched from Finder or
+the Dock gets a minimal `PATH` from launchd that does not. Without the fallback
+search, the packaged app reports "ffmpeg not found" on a machine where ffmpeg
+plainly works in Terminal, and silently loses metadata, proxies, waveform sync
+and dailies. Discovery never touches the copy or verification path: if ffmpeg
+really is absent, those features report unavailable and the offload, the
+checksums and the format gate behave exactly as before.
+
 ---
 
 ## 18. Security model

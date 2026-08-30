@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import threading
 import time
@@ -37,10 +36,11 @@ except ImportError:  # The UI must still launch and explain what is unavailable.
     np = None
 
 import db
+import toolpaths
 import storage
 
 
-FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+FFMPEG = toolpaths.ffmpeg()
 SAMPLE_RATE = 500
 MAX_SAMPLES = 4_000_000             # A little over two hours per input.
 AUTO_SCORE = 0.62
@@ -78,7 +78,7 @@ def capability(recheck=False):
             np = _np
         except ImportError:
             pass
-    FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+    FFMPEG = toolpaths.ffmpeg()
     if np is None:
         _capability = (False, "NumPy is not installed; run start.command while online once")
         return _capability

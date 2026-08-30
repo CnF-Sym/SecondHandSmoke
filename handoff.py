@@ -28,7 +28,6 @@ import hashlib
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -42,6 +41,7 @@ from pathlib import Path
 import xxhash
 
 import db
+import toolpaths
 import media
 import proxies
 import storage
@@ -53,7 +53,7 @@ except ImportError:  # The ingest/verification safety path must still launch.
     Image = ImageDraw = ImageFont = None
 
 
-FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+FFMPEG = toolpaths.ffmpeg()
 PROFILE = "h264_720p_burnin_v1"
 PROFILE_LABEL = "H.264 review 720p"
 FCPXML_VERSION = "1.10"
@@ -79,7 +79,7 @@ def capability(recheck=False):
     global _capability, FFMPEG, Image, ImageDraw, ImageFont
     if _capability is not None and (_capability[0] or not recheck):
         return _capability
-    FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+    FFMPEG = toolpaths.ffmpeg()
     if Image is None:
         try:
             from PIL import Image as _I, ImageDraw as _D, ImageFont as _F

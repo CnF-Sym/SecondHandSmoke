@@ -26,7 +26,6 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -37,11 +36,12 @@ from collections import Counter
 import xxhash
 
 import db
+import toolpaths
 import media
 import storage
 
 
-FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+FFMPEG = toolpaths.ffmpeg()
 PROFILE = "prores_proxy_1080p_v1"
 PROFILE_LABEL = "ProRes Proxy 1080p"
 ESTIMATED_BYTES_PER_SECOND = 6_000_000
@@ -67,7 +67,7 @@ def capability(recheck=False):
     global _capability, FFMPEG
     if _capability is not None and (_capability[0] or not recheck):
         return _capability
-    FFMPEG = os.environ.get("DIT_FFMPEG") or shutil.which("ffmpeg")
+    FFMPEG = toolpaths.ffmpeg()
     if not media.FFPROBE:
         media.refresh_tools()
     if not FFMPEG:

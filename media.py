@@ -27,15 +27,15 @@ import csv
 import json
 import os
 import re
-import shutil
 import struct
 import subprocess
 import xml.etree.ElementTree as ET
 
 import db
+import toolpaths
 
 
-FFPROBE = os.environ.get("DIT_FFPROBE") or shutil.which("ffprobe")
+FFPROBE = toolpaths.ffprobe()
 
 try:
     PROBE_TIMEOUT = max(5, int(os.environ.get("DIT_PROBE_TIMEOUT", "90")))
@@ -46,7 +46,7 @@ except ValueError:
 def refresh_tools():
     """Re-detect ffprobe. Lets a mid-shoot install take effect without a restart."""
     global FFPROBE
-    FFPROBE = os.environ.get("DIT_FFPROBE") or shutil.which("ffprobe")
+    FFPROBE = toolpaths.ffprobe()
     return FFPROBE
 
 

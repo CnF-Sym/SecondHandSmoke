@@ -126,6 +126,7 @@ import proxies  # noqa: E402
 import reports  # noqa: E402
 import storage  # noqa: E402
 import sync  # noqa: E402
+import toolpaths  # noqa: E402
 import version  # noqa: E402
 import waveform  # noqa: E402
 
@@ -1403,7 +1404,7 @@ tracker_source = open("app.js", encoding="utf-8").read()
 check("the step tracker counts distinct devices",
       "deviceKeys.size >= s.min_copies" in tracker_source)
 
-print("\n[20] version")
+print("\n[20] version and tool discovery")
 
 # The VERSION file is the single source of truth. If Python and the macOS
 # build scripts read different numbers, an MHL can claim to come from a build
@@ -1423,6 +1424,47 @@ if tool_mhl:
 else:
     check("MHL tool field carries the VERSION file's number", False,
           "manifest was not written")
+
+# An explicit override is honoured verbatim. Substituting a different binary
+# for the one the operator named would be worse than the error they asked for.
+os.environ["DIT_FFMPEG"] = "/nowhere/ffmpeg"
+check("an explicit DIT_FFMPEG override is used verbatim",
+      toolpaths.ffmpeg() == "/nowhere/ffmpeg")
+del os.environ["DIT_FFMPEG"]
+
+# The case that breaks the packaged app: launchd gives a Finder-launched .app
+# a minimal PATH with no Homebrew on it. Discovery must still find ffmpeg.
+fake_bin = os.path.join(RIG, "fake_bin")
+os.makedirs(fake_bin, exist_ok=True)
+fake_ffmpeg = os.path.join(fake_bin, "ffmpeg")
+with open(fake_ffmpeg, "w") as handle:
+    handle.write("#!/bin/sh\nexit 0\n")
+os.chmod(fake_ffmpeg, 0o755)
+
+saved_path = os.environ.get("PATH", "")
+saved_dirs = toolpaths.FALLBACK_DIRS
+try:
+    os.environ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    toolpaths.FALLBACK_DIRS = (fake_bin,)
+    check("ffmpeg is found off PATH, as when launched from Finder",
+          toolpaths.ffmpeg() == fake_ffmpeg, str(toolpaths.ffmpeg()))
+    toolpaths.FALLBACK_DIRS = (os.path.join(RIG, "does_not_exist"),)
+    check("a genuinely absent ffmpeg still reports absent",
+          toolpaths.ffmpeg() is None, str(toolpaths.ffmpeg()))
+finally:
+    toolpaths.FALLBACK_DIRS = saved_dirs
+    os.environ["PATH"] = saved_path
+
+# A non-executable file of the right name is not a usable tool.
+os.chmod(fake_ffmpeg, 0o644)
+try:
+    os.environ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    toolpaths.FALLBACK_DIRS = (fake_bin,)
+    check("a non-executable file of the right name is not accepted",
+          toolpaths.ffmpeg() is None, str(toolpaths.ffmpeg()))
+finally:
+    toolpaths.FALLBACK_DIRS = saved_dirs
+    os.environ["PATH"] = saved_path
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
