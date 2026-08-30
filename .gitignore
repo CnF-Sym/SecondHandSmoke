@@ -32,3 +32,6 @@ dailies/
 
 # Logs and scratch
 *.log
+
+# Internal scaffolding, not part of the release
+_NEXT_SESSION_PROMPT.md
