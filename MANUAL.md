@@ -3,7 +3,7 @@
 
 *A CnF Works Project*
 
-Version 1.0
+Version 0.1.0
 
 > **On the name.** Second Hand Smoke is the product. FML is the File Management Library
 > underneath it — this manual is the only place that expansion is written out,

@@ -246,7 +246,7 @@ def write_mhl(card_id, destination_id):
         f'    <name>{esc(OPERATOR_NAME)}</name>',
         f'    <username>{esc(getpass.getuser())}</username>',
         f'    <hostname>{esc(socket.gethostname())}</hostname>',
-        f'    <tool>Second Hand Smoke 1.0 (CnF Works)</tool>',
+        f'    <tool>Second Hand Smoke 0.1.0 (CnF Works)</tool>',
         f'    <startdate>{stamp}</startdate>',
         f'    <finishdate>{stamp}</finishdate>',
         '  </creatorinfo>',
