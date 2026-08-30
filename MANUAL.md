@@ -3,7 +3,10 @@
 
 *A CnF Works Project*
 
-Version 0.1.0
+Version 0.1.0 — read from the `VERSION` file at the repository root.
+`version.py` and the macOS build scripts both read that one file, so the
+number in the manual, in the app's Info.plist and in every MHL `<tool>`
+field cannot drift apart.
 
 > **On the name.** Second Hand Smoke is the product. FML is the File Management Library
 > underneath it — this manual is the only place that expansion is written out,
@@ -888,6 +891,18 @@ Constants: `AUTO_SCORE 0.62`, `AUTO_MARGIN 0.08`, `REVIEW_SCORE 0.35`,
 | `transcode_daily(...)` | The ffmpeg call that builds one review movie |
 | `build_fcpxml / build_ale / build_manifest / build_readme` | The four documents |
 | `preflight / start / cancel / day_summary` | Lifecycle and reporting |
+
+### `version.py` — the version number
+
+| Name | Purpose |
+|---|---|
+| `VERSION_FILE` | Absolute path to the `VERSION` file at the repository root |
+| `VERSION` | Its contents, or `0.0.0-unknown` if it cannot be read |
+| `TOOL_STRING` | `Second Hand Smoke <version> (CnF Works)`, written into every MHL |
+
+An unreadable `VERSION` file does not stop an offload. It marks the manifest as
+coming from an unidentified build, which is visible in the paperwork rather
+than silently wrong.
 
 ---
 

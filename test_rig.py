@@ -126,6 +126,7 @@ import proxies  # noqa: E402
 import reports  # noqa: E402
 import storage  # noqa: E402
 import sync  # noqa: E402
+import version  # noqa: E402
 import waveform  # noqa: E402
 
 
@@ -1401,6 +1402,27 @@ else:
 tracker_source = open("app.js", encoding="utf-8").read()
 check("the step tracker counts distinct devices",
       "deviceKeys.size >= s.min_copies" in tracker_source)
+
+print("\n[20] version")
+
+# The VERSION file is the single source of truth. If Python and the macOS
+# build scripts read different numbers, an MHL can claim to come from a build
+# that never wrote it.
+version_file = open(version.VERSION_FILE, encoding="utf-8").read().strip()
+check("VERSION file is readable and not the unknown placeholder",
+      version.VERSION == version_file and version.VERSION != "0.0.0-unknown",
+      version.VERSION)
+
+tool_mhl = reports.write_mhl(cam_id, saved_devices[0][0])
+if tool_mhl:
+    tool_field = ET.fromstring(open(tool_mhl, encoding="utf-8").read()) \
+        .find("creatorinfo").findtext("tool")
+    check("MHL tool field carries the VERSION file's number",
+          tool_field is not None and version.VERSION in tool_field,
+          tool_field)
+else:
+    check("MHL tool field carries the VERSION file's number", False,
+          "manifest was not written")
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
