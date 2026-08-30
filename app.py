@@ -728,7 +728,7 @@ db.init()
 
 
 if __name__ == "__main__":
-    print(f"\n  CF SMOKER · Second Hand Smoke → http://127.0.0.1:{PORT}")
+    print(f"\n  SECOND HAND SMOKE → http://127.0.0.1:{PORT}")
     print("  A CnF Works Project")
     print(f"  Catalog: {db.DB_PATH}")
     print(f"  Scanning: {cards.SCAN_ROOT}")

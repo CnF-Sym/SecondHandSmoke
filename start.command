@@ -35,6 +35,21 @@ if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; 
 fi
 
 echo "Starting Second Hand Smoke · A CnF Works Project…"
-SMOKER_PORT="${DIT_PORT:-3838}"
-(sleep 1; open "http://127.0.0.1:${SMOKER_PORT}") &
+SHS_PORT="${DIT_PORT:-3838}"
+
+# Wait for the server to actually accept connections before opening the browser.
+# On a cold start Flask can take several seconds, and a browser that arrives
+# early just shows "can't connect" and sits there.
+(
+  for _ in $(seq 1 60); do
+    if /usr/bin/nc -z 127.0.0.1 "${SHS_PORT}" 2>/dev/null; then
+      open "http://127.0.0.1:${SHS_PORT}"
+      exit 0
+    fi
+    sleep 0.5
+  done
+  echo "Second Hand Smoke did not start listening on port ${SHS_PORT} within 30 seconds."
+  echo "Open http://127.0.0.1:${SHS_PORT} yourself once it does, or check the messages above."
+) &
+
 exec .venv/bin/python app.py
