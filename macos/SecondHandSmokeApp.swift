@@ -88,10 +88,10 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "About Second Hand Smoke",
-                        action: #selector(showAbout(_:)), keyEquivalent: "")?.target = self
+                        action: #selector(showAbout(_:)), keyEquivalent: "").target = self
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Reveal Server Log in Finder",
-                        action: #selector(revealLog(_:)), keyEquivalent: "")?.target = self
+                        action: #selector(revealLog(_:)), keyEquivalent: "").target = self
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide Second Hand Smoke",
                         action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -116,7 +116,7 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
         let viewItem = NSMenuItem()
         let viewMenu = NSMenu(title: "View")
         viewMenu.addItem(withTitle: "Reload", action: #selector(reload(_:)),
-                         keyEquivalent: "r")?.target = self
+                         keyEquivalent: "r").target = self
         viewMenu.addItem(withTitle: "Enter Full Screen",
                          action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         viewItem.submenu = viewMenu
@@ -157,6 +157,9 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
     // Ask the kernel for a free port rather than assuming 3838 is available.
     // Two copies of this app fighting over one port is a confusing failure, and
     // the operator never types this number anyway.
+    // Darwin.bind and Darwin.connect are spelled out because NSObject has its
+    // own bind(_:to:withKeyPath:options:) and this class inherits it. Unqualified,
+    // the compiler picks the wrong one.
     private func reserveLocalPort() throws -> UInt16 {
         for candidate in [UInt16(3838), UInt16(0)] {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -171,7 +174,7 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
             addr.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
             let bound = withUnsafePointer(to: &addr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
             if bound != 0 { continue }
@@ -281,7 +284,7 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
         addr.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
         let result = withUnsafePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
             }
         }
         return result == 0
