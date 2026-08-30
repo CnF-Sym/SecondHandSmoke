@@ -29,6 +29,14 @@ if ! .venv/bin/python -c 'import PIL' 2>/dev/null; then
   fi
 fi
 
+if ! .venv/bin/python -c 'import reportlab' 2>/dev/null; then
+  echo "Installing optional PDF-report support…"
+  if ! .venv/bin/pip install 'reportlab>=4,<5'; then
+    echo "PDF reports are unavailable until reportlab can be installed."
+    echo "The HTML day report, verified offload and every phase still work."
+  fi
+fi
+
 if ! command -v ffprobe >/dev/null 2>&1 || ! command -v ffmpeg >/dev/null 2>&1; then
   echo "Note: ffmpeg/ffprobe was not found. Copies remain safe, but metadata, proxies, waveform sync and dailies will be unavailable."
   echo "Install ffmpeg before the shoot to enable durations, timecode, proxies, waveform sync and dailies."

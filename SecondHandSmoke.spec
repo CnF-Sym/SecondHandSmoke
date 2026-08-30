@@ -30,6 +30,7 @@ a = Analysis(
         'xxhash',
         'numpy',
         'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageFont',
+        'reportlab', 'reportlab.pdfgen', 'reportlab.platypus',
     ],
     hookspath=[],
     runtime_hooks=[],

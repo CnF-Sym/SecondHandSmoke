@@ -220,6 +220,38 @@ amber warning. A drive that does that twice should leave the set.
 
 ---
 
+## Reports
+
+Every shoot day produces an HTML report — destinations, per-card format
+clearance, media metadata, sync, waveform results and a file-by-file
+verification table showing the state of every file on every drive.
+
+The same day can also be produced as a **branded PDF**, which is what producers
+and post houses actually want in an email. Set a production name and a logo in
+the **Reports** panel, then choose a layout:
+
+- **Verification PDF** — the dense manifest. Every file, its size, its xxHash64,
+  and its verified/failed state on each destination drive.
+- **Metadata PDF** — every clip with scene, take, duration, start timecode,
+  format, audio and proxy state.
+
+Both carry the SAFE TO FORMAT or DO NOT FORMAT stamp for each card, and both
+are generated from **one reading of the catalog**. The PDF writer cannot query
+the database at all; it is handed the same structure the HTML report was handed,
+including the same format-gate verdict, in the same call. Two documents that
+could disagree about whether a card is safe to format is the one bug this
+program exists to prevent, so they are not two code paths.
+
+The HTML report is unchanged and is not going anywhere. The PDF is an addition.
+
+PDFs need `reportlab`, which is optional in the same way NumPy and Pillow are:
+without it the PDF buttons explain that they are unavailable and everything
+else — the offload, the verification, the HTML report, the format gate — is
+untouched. `start.command` installs it if it can. Inside the macOS application
+it is always present.
+
+---
+
 ## Output layout
 
 ```
@@ -413,7 +445,8 @@ out of scope.
 | `db.py` | SQLite schema and connection handling |
 | `cards.py` | Card detection, classification, content fingerprinting |
 | `offload.py` | The copy and verify engine |
-| `reports.py` | Format gate, MHL writer, day report |
+| `reports.py` | Format gate, MHL writer, report data and the HTML report |
+| `pdfreport.py` | The branded PDF report, rendered from `reports.day_data()` |
 | `media.py` | ffprobe metadata and recorder CSV sound-report parsing |
 | `proxies.py` | Resumable ProRes Proxy queue, validation and progress |
 | `sync.py` | Frame-accurate camera/sound overlap matching and relationships |

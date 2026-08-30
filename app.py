@@ -35,6 +35,7 @@ import db
 import handoff
 import media
 import offload
+import pdfreport
 import proxies
 import reports
 import storage
@@ -180,13 +181,9 @@ def component(value, label):
 
 
 # --------------------------------------------------------------------------
-def setting(key, value=None):
-    if value is None:
-        row = db.q1("SELECT value FROM settings WHERE key=?", (key,))
-        return row["value"] if row else None
-    db.ex("INSERT INTO settings (key,value) VALUES (?,?) "
-          "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
-    return value
+# Reading and writing preferences lives in db.py, where the report
+# writers can reach it without importing the web layer.
+setting = db.setting
 
 
 def active_day():
@@ -690,6 +687,38 @@ def manifest(card_id):
     return jsonify(ok=True, paths=written)
 
 
+@app.post("/api/report-branding")
+def report_branding():
+    body = request.get_json(silent=True) or {}
+    production = str(body.get("production") or "").strip()[:120]
+    logo = str(body.get("logo") or "").strip()
+    if logo:
+        logo = os.path.abspath(os.path.expanduser(logo))
+        if not os.path.isfile(logo):
+            return jsonify(error=f"No file at {logo}"), 400
+    db.setting(pdfreport.SETTING_PRODUCTION, production)
+    db.setting(pdfreport.SETTING_LOGO, logo)
+    return jsonify(ok=True, production=production, logo=logo)
+
+
+@app.get("/api/day/<int:day_id>/report.pdf")
+def day_report_pdf(day_id):
+    if not db.q1("SELECT id FROM days WHERE id=?", (day_id,)):
+        return Response("Unknown shoot day.\n", status=404, mimetype="text/plain")
+    layout = request.args.get("layout", pdfreport.DEFAULT_LAYOUT)
+    try:
+        path = pdfreport.build(day_id, layout)
+    except RuntimeError as exc:
+        # reportlab is optional. Say why, rather than throwing a 500 at someone
+        # who only wanted a PDF of paperwork they can already read as HTML.
+        return Response(f"{exc}\n", status=503, mimetype="text/plain")
+    except ValueError as exc:
+        return Response(f"{exc}\n", status=400, mimetype="text/plain")
+    return send_from_directory(os.path.dirname(path), os.path.basename(path),
+                               mimetype="application/pdf", as_attachment=True,
+                               download_name=os.path.basename(path))
+
+
 @app.get("/api/day/<int:day_id>/report")
 def day_report(day_id):
     if not db.q1("SELECT id FROM days WHERE id=?", (day_id,)):
@@ -703,6 +732,7 @@ def day_report(day_id):
 @app.get("/api/state")
 def state():
     day = active_day()
+    pdf_available, pdf_reason = pdfreport.availability()
     payload = {
         "days": rows(db.q("SELECT * FROM days ORDER BY shoot_date DESC, name DESC")),
         "day": dict(day) if day else None,
@@ -712,6 +742,10 @@ def state():
         # it tells anyone. A mid-shoot ffmpeg install is picked up by the
         # existing refresh in the metadata path.
         "tools": {"ffprobe": media.FFPROBE, "ffmpeg": proxies.FFMPEG},
+        "pdf": {"available": pdf_available, "reason": pdf_reason,
+                "layouts": list(pdfreport.LAYOUTS)},
+        "branding": {"production": db.setting(pdfreport.SETTING_PRODUCTION) or "",
+                     "logo": db.setting(pdfreport.SETTING_LOGO) or ""},
         "destinations": [], "cards": [],
         "job": latest_job(),
         "sync": None,

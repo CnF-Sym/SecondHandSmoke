@@ -1557,5 +1557,81 @@ check("the interface explains what an absent ffmpeg does and does not break",
 check("the interface reports tool discovery from the server",
       '"tools"' in open("app.py", encoding="utf-8").read())
 
+print("\n[23] the PDF report cannot disagree with the HTML report")
+
+import pdfreport
+
+data = reports.day_data(day_id)
+check("day_data gathers the whole day in one pass",
+      bool(data) and len(data["cards"]) == len(db.q(
+          "SELECT id FROM cards WHERE day_id=?", (day_id,))))
+check("day_data answers None for a shoot day that does not exist",
+      reports.day_data(999999) is None)
+
+# The gate verdict in the report data is the gate verdict, not a copy of it
+# that has drifted.
+gates_agree = all(
+    entry["gate"]["safe"] == reports.card_status(entry["card"]["id"])["safe"]
+    for entry in data["cards"])
+check("every gate verdict in the report data is the live gate verdict", gates_agree)
+
+# The HTML report renders from that same structure and nothing else.
+check("the HTML report is rendered from day_data",
+      reports.render_html(data).count("SAFE TO FORMAT")
+      + reports.render_html(data).count("DO NOT FORMAT") == len(data["cards"]))
+
+# Structural, and the important one: the PDF writer has no way to reach the
+# catalog, so it cannot form a second opinion about anything.
+pdf_source = open("pdfreport.py", encoding="utf-8").read()
+check("the PDF writer never queries the catalog",
+      "db.q(" not in pdf_source and "db.q1(" not in pdf_source)
+check("the PDF writer never calls the format gate itself",
+      "reports.card_status" not in pdf_source)
+check("both renderers take the stamp wording from one place",
+      "reports.gate_stamp(" in pdf_source and
+      "gate_stamp(st)" in open("reports.py", encoding="utf-8").read())
+
+check("the stamp wording matches the verdict",
+      reports.gate_stamp({"safe": True}) == ("SAFE TO FORMAT", True) and
+      reports.gate_stamp({"safe": False}) == ("DO NOT FORMAT", False))
+
+pdf_ok, pdf_reason = pdfreport.availability()
+if pdf_ok:
+    for layout in pdfreport.LAYOUTS:
+        produced = pdfreport.build(day_id, layout,
+                                   out_path=os.path.join(RIG, f"report_{layout}.pdf"))
+        head = open(produced, "rb").read(5)
+        check(f"the {layout} PDF is written and is a PDF",
+              head == b"%PDF-" and os.path.getsize(produced) > 1000,
+              f"{head!r} {os.path.getsize(produced)} bytes")
+
+    response = c.get(f"/api/day/{day_id}/report.pdf?layout=table")
+    check("the PDF route serves a PDF",
+          response.status_code == 200 and response.data[:5] == b"%PDF-",
+          response.status_code)
+    bad_layout = c.get(f"/api/day/{day_id}/report.pdf?layout=nonsense")
+    check("an unknown layout is refused rather than guessed",
+          bad_layout.status_code == 400, bad_layout.status_code)
+    check("an unknown shoot day answers 404 from the PDF route too",
+          c.get("/api/day/999999/report.pdf").status_code == 404)
+
+    # A logo is decoration. A missing one must never cost anyone their report.
+    db.setting(pdfreport.SETTING_LOGO, os.path.join(RIG, "no_such_logo.png"))
+    survived = pdfreport.build(day_id, "table",
+                               out_path=os.path.join(RIG, "report_nologo.pdf"))
+    check("a missing logo does not stop the report",
+          os.path.getsize(survived) > 1000)
+    db.setting(pdfreport.SETTING_LOGO, "")
+else:
+    print(f"  SKIP  reportlab is not installed — {pdf_reason}")
+    check("without reportlab the PDF route explains itself instead of failing",
+          c.get(f"/api/day/{day_id}/report.pdf").status_code == 503)
+    check("without reportlab the HTML report still works",
+          c.get(f"/api/day/{day_id}/report").status_code == 200)
+
+# The HTML report is an addition's neighbour, not its casualty.
+check("the HTML day report still renders after the split",
+      c.get(f"/api/day/{day_id}/report").status_code == 200)
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

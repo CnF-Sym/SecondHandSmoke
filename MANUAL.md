@@ -238,6 +238,17 @@ before `start.command`.
 | `DIT_SLATE_FONT` | auto-detected | Font for the dailies slate |
 | `DIT_KEEP_TEST_RIG` | — | Set to `1` to keep the test rig's temp folder |
 
+Two settings are stored in the catalog rather than the environment, because
+they belong to the production rather than the machine:
+
+| Setting | Set from | Purpose |
+|---|---|---|
+| `report_production_name` | Reports panel | Printed at the top of the PDF report |
+| `report_logo_path` | Reports panel | Image placed on the PDF's first page |
+
+A logo is decoration. If the file is missing or unreadable the report is still
+produced, with a line saying the logo could not be drawn.
+
 A non-numeric value in any of the numeric variables falls back to the default
 rather than refusing to start.
 
@@ -652,6 +663,19 @@ start TC, format, audio, metadata state, proxy state), a camera/sound sync table
 a waveform table, and a per-file verification table with one column per
 destination.
 
+### 14.3b Day report PDF — `REPORTS/ingest_DAY_01_<layout>.pdf`
+
+The same day, branded and paginated, in the layout chosen in the Reports panel:
+`table` for the dense verification manifest, `metadata` for the per-clip
+listing. Landscape A4, the production's name and logo on the first page, and a
+running footer carrying the build that wrote it, the licence and the support
+address on every page.
+
+It is generated from the same single reading of the catalog as the HTML report
+above — same destinations, same media, same format-gate verdict — so the two
+documents cannot describe the same day differently. reportlab is required for
+this and nothing else; the HTML report is written either way.
+
 ### 14.4 ProRes proxies — `PROXY/<roll>/<clip>_PXY.mov`
 
 1920×1080 Apple ProRes Proxy, `yuv422p10le`, Apple vendor tag, with a QuickTime
@@ -777,6 +801,8 @@ must be `application/json` and must come from the tool's own origin.
 | `POST` | `/api/day/<day>/handoff?rebuild=1` | Build the editorial handoff |
 | `GET` | `/api/day/<day>/handoff/notes` | The operator notes, rendered |
 | `GET` | `/api/day/<day>/report` | The day report HTML |
+| `GET` | `/api/day/<day>/report.pdf?layout=` | The day report as a branded PDF; `table` or `metadata`. 503 with the reason when reportlab is absent |
+| `POST` | `/api/report-branding` | Store the production name and logo path. Body: `production`, `logo` |
 | `GET` | `/api/state` | Everything the interface draws: days, destinations, cards, gates, summaries, active job |
 
 ### Status codes
@@ -849,6 +875,11 @@ sits on.
 
 ### `reports.py` — the gate, the manifest, the paperwork
 
+Since the PDF report arrived, this module is in two halves: `day_data()`
+gathers a shoot day from the catalog once, and `render_html()` turns that into
+the HTML report. `pdfreport.py` renders the same structure. Nothing after
+`day_data()` queries anything.
+
 | Function | Purpose |
 |---|---|
 | `card_status(card_id)` | **The format gate.** Live, authoritative |
@@ -915,6 +946,26 @@ Constants: `AUTO_SCORE 0.62`, `AUTO_MARGIN 0.08`, `REVIEW_SCORE 0.35`,
 | `transcode_daily(...)` | The ffmpeg call that builds one review movie |
 | `build_fcpxml / build_ale / build_manifest / build_readme` | The four documents |
 | `preflight / start / cancel / day_summary` | Lifecycle and reporting |
+
+### `pdfreport.py` — the branded PDF report
+
+| Function | Purpose |
+|---|---|
+| `availability()` | `(available, reason)`; the reason is shown to the operator verbatim |
+| `branding()` | Production name and logo path from settings; never raises |
+| `build(day_id, layout, out_path)` | Writes the PDF and returns its path |
+| `LAYOUTS` | `table` (verification manifest) and `metadata` |
+
+This module never touches the catalog. `reports.day_data()` gathers the day
+once and hands it over, so the SAFE TO FORMAT stamp printed in the PDF is
+quoting the same `card_status()` result the HTML report quoted, from the same
+dictionary, in the same call. There is no second query, so there is no second
+opinion. `reports.gate_stamp()` supplies the wording to both, so even the
+sentence has one definition.
+
+reportlab is optional. Without it the PDF is reported unavailable, the HTTP
+route answers 503 with the reason, and the offload, the verification, the HTML
+report and the format gate are untouched.
 
 ### `server_main.py` — the packaged server's entry point
 

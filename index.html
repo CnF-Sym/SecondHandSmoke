@@ -35,6 +35,22 @@
       <button class="btn" onclick="createDay()">Start day</button>
     </section>
 
+    <section class="panel" id="reportPanel">
+      <h2>Reports</h2>
+      <p class="note" id="pdfNote"></p>
+      <div class="field-row">
+        <input id="reportProduction" placeholder="Production name — printed on the PDF">
+      </div>
+      <div class="field-row">
+        <input id="reportLogo" placeholder="Logo image, e.g. /Users/you/Show/logo.png">
+      </div>
+      <button class="btn ghost" onclick="saveBranding()">Save branding</button>
+      <button class="btn ghost" id="pdfTableButton" onclick="openPdf('table')"
+        disabled>Verification PDF</button>
+      <button class="btn ghost" id="pdfMetaButton" onclick="openPdf('metadata')"
+        disabled>Metadata PDF</button>
+    </section>
+
     <section class="panel accent-dest">
       <h2><span class="num">2</span>Destinations — 2 drives + cloud</h2>
       <p class="note" id="destNote"></p>

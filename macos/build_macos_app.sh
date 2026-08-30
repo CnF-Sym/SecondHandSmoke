@@ -39,6 +39,12 @@ fi
 "$BUILD_VENV/bin/pip" install --quiet -r "$ROOT/requirements.txt"
 "$BUILD_VENV/bin/pip" install --quiet -r "$ROOT/macos/requirements-build.txt"
 
+# reportlab is optional when running from source — a machine without it still
+# offloads and still writes the HTML report. Inside the application it is
+# always present, so the PDF report is never the thing that is missing on a
+# shoot morning.
+"$BUILD_VENV/bin/pip" install --quiet 'reportlab>=4,<5'
+
 # 2. Freeze the server. Everything the Python side needs ends up in dist/server.
 echo "--- Server"
 rm -rf "$ROOT/build" "$ROOT/dist/server" "$APP"

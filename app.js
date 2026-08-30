@@ -205,6 +205,52 @@ function openHandoffNotes() {
 
 function openReport(id) { window.open(`/api/day/${id}/report`, "_blank"); }
 
+function openPdf(layout) {
+  if (!activeDayId) return toast("Start a shoot day first.");
+  window.open(`/api/day/${activeDayId}/report.pdf?layout=${layout}`, "_blank");
+}
+
+async function saveBranding() {
+  const production = $("reportProduction").value.trim();
+  const logo = $("reportLogo").value.trim();
+  try {
+    await api("/api/report-branding",
+              { method: "POST", body: JSON.stringify({ production, logo }) });
+    toast("Report branding saved.");
+  } catch (err) {
+    toast(String(err.message || err));
+  }
+  refresh();
+}
+
+// The PDF is an addition, never a replacement: if reportlab is absent the HTML
+// day report is still there and still authoritative. Say that plainly instead
+// of leaving two dead buttons.
+function renderReports(state) {
+  const note = $("pdfNote");
+  const pdf = state.pdf || {};
+  const brand = state.branding || {};
+  const focused = document.activeElement;
+  if (focused !== $("reportProduction")) $("reportProduction").value = brand.production || "";
+  if (focused !== $("reportLogo")) $("reportLogo").value = brand.logo || "";
+
+  const ready = Boolean(pdf.available && activeDayId);
+  $("pdfTableButton").disabled = !ready;
+  $("pdfMetaButton").disabled = !ready;
+
+  if (!pdf.available) {
+    note.className = "note warn";
+    note.textContent = pdf.reason || "PDF reports are unavailable on this machine.";
+  } else if (!activeDayId) {
+    note.className = "note";
+    note.textContent = "Start a shoot day to produce a report.";
+  } else {
+    note.className = "note";
+    note.textContent = "The PDF and the HTML report are generated from one reading of "
+      + "the catalog, so they cannot disagree about whether a card is safe to format.";
+  }
+}
+
 // -- render ----------------------------------------------------------------
 function renderJob(job) {
   const p = $("jobPanel");
@@ -634,6 +680,7 @@ async function refresh() {
   renderCards(s.cards, s.day ? s.day.id : 0);
   renderSteps(s);
   renderTools(s.tools);
+  renderReports(s);
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&
       ["done", "failed", "cancelled"].includes(s.job.state) && s.job.finished_epoch &&
