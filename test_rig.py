@@ -1466,5 +1466,64 @@ finally:
     toolpaths.FALLBACK_DIRS = saved_dirs
     os.environ["PATH"] = saved_path
 
+print("\n[21] the macOS application bundle")
+
+import re
+import subprocess
+import sys
+
+spec_source = open("SecondHandSmoke.spec", encoding="utf-8").read()
+app_source = open("app.py", encoding="utf-8").read()
+
+# Every file app.py serves off disk has to be inside the frozen bundle. Adding
+# a stylesheet and forgetting the spec produces an app that is fine in
+# development and broken for everyone who downloads it.
+served = set(re.findall(r'send_from_directory\(BASE_DIR,\s*"([^"]+)"', app_source))
+served |= set(re.findall(r'render_template\("([^"]+)"', app_source))
+served.add("VERSION")
+missing = sorted(name for name in served if f"('{name}', '.')" not in spec_source)
+check("every file the server reads off disk is bundled by the spec",
+      not missing, ", ".join(missing) or "")
+
+# A denied removable-volume prompt makes cards look empty rather than raising.
+# The usage description is the only thing that gives the operator a reason to
+# say yes, so losing it is a silent, expensive regression.
+plist_source = open("macos/Info.plist", encoding="utf-8").read()
+check("Info.plist explains why the app needs removable volumes",
+      "NSRemovableVolumesUsageDescription" in plist_source)
+check("the app bundle is not sandboxed",
+      "com.apple.security.app-sandbox" not in
+      open("macos/entitlements.plist", encoding="utf-8").read())
+
+build_source = open("macos/build_macos_app.sh", encoding="utf-8").read()
+check("the build script takes the version from the VERSION file",
+      'tr -d \'[:space:]\' < "$ROOT/VERSION"' in build_source and
+      "CFBundleShortVersionString $VERSION" in build_source)
+
+# Two servers on one catalog is a race next to the format gate. The lock is
+# what stops it, so prove a second process is actually refused.
+import server_main
+
+held = server_main.claim_single_instance()
+check("a server claims an exclusive lock beside the catalog",
+      os.path.exists(server_main._lock_path()))
+
+second = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, '.'); import server_main;"
+     " server_main.claim_single_instance()"],
+    cwd=os.getcwd(), env=dict(os.environ), capture_output=True, text=True)
+check("a second server on the same catalog is refused",
+      second.returncode == 3, second.stderr.strip().splitlines()[-1:] or second.returncode)
+
+held.close()
+second = subprocess.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, '.'); import server_main;"
+     " server_main.claim_single_instance()"],
+    cwd=os.getcwd(), env=dict(os.environ), capture_output=True, text=True)
+check("the lock is released when the server that held it exits",
+      second.returncode == 0, second.stderr.strip())
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

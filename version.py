@@ -23,8 +23,11 @@ reads it here; the macOS build scripts read the same file with PlistBuddy.
 """
 
 import os
+import sys
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# Inside the packaged application the VERSION file is unpacked beside the
+# frozen modules rather than sitting next to this source file.
+ROOT = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 VERSION_FILE = os.path.join(ROOT, "VERSION")
 
 

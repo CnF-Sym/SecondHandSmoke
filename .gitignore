@@ -13,6 +13,14 @@ __pycache__/
 *.db-shm
 SecondHandSmoke/
 
+# macOS packaging output and build scratch
+dist/
+build/
+macos/.build-venv/
+macos/.pyinstaller-cache/
+*.dmg
+*.dmg.sha256
+
 # Generated output
 reports/
 proxies/

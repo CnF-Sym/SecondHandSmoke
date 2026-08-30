@@ -83,31 +83,66 @@ than MD5, which is the entire job.
 
 ---
 
-## Setup
+## Install
 
-Double-click `start.command`. On first launch it creates a private Python
-environment and installs the core packages plus optional phase helpers. Or use Terminal:
+Download `SecondHandSmoke-<version>.dmg` from the
+[releases page](https://github.com/CnF-Sym/SecondHandSmoke/releases), open it,
+and drag **Second Hand Smoke** to Applications. Double-click it. That is the
+whole installation — no Terminal, no Python to install, nothing to configure.
+
+**If macOS says the app is from an unidentified developer**, the build you have
+is not notarized. Right-click (or Control-click) the app in Applications and
+choose **Open**, then **Open** again in the dialog. macOS remembers the
+decision; every launch after that is an ordinary double-click. This is the same
+step every unsigned Mac app needs, and the reason it exists is worth knowing:
+Apple charges an annual fee for the certificate that removes it.
+
+**macOS will ask for permission to access removable volumes** the first time
+the app looks for a card. Say yes — reading cards is the entire job. If you say
+no, cards do not produce an error, they simply appear to be empty. If a card
+that is plainly mounted shows nothing, look in **System Settings → Privacy &
+Security → Files and Folders** before looking anywhere else.
+
+**Install `ffmpeg` before the shoot** (Homebrew: `brew install ffmpeg`). It is
+deliberately not bundled. Without it, offload, verification, checksums, MHL
+manifests and the format gate all work exactly as normal; metadata, ProRes
+proxies, timecode sync, the waveform fallback and dailies are unavailable, and
+the interface says so rather than failing quietly.
+
+Each launch writes a log to `~/Library/Logs/Second Hand Smoke/server.log`, and
+the app menu has **Reveal Server Log in Finder**. That is the file to send if
+something goes wrong.
+
+### Running from source instead
+
+Double-click `start.command`, or from Terminal:
 
 ```bash
 ./start.command
 ```
 
-Open <http://127.0.0.1:3838>.
+On first launch it creates a private Python environment and installs the core
+packages plus the optional phase helpers. Then open <http://127.0.0.1:3838>.
 
 Flask prints `WARNING: This is a development server` on startup. That warning is
 aimed at people exposing Flask to the internet. This server is bound to
 loopback, is reachable only from your own machine, and serves exactly one
 operator — the warning does not apply, and swapping in a production WSGI server
-would add a dependency without changing anything about how it runs. Bound to loopback only, and the API additionally
-refuses any request whose `Host` is not loopback and any state-changing request
-that did not come from the tool's own page — so a web page open in another tab
-cannot reach in and stop an offload.
+would add a dependency without changing anything about how it runs. Bound to
+loopback only, and the API additionally refuses any request whose `Host` is not
+loopback and any state-changing request that did not come from the tool's own
+page — so a web page open in another tab cannot reach in and stop an offload.
 
-Install `ffmpeg`/`ffprobe` before the shoot (Homebrew: `brew install ffmpeg`) to
-read duration, codec, resolution, frame rate, camera timecode and BWF metadata.
-Offload verification still works without it; metadata is marked unavailable.
+### Building the app yourself
 
-Environment variables:
+See [`macos/README.md`](macos/README.md). Short version: install the Xcode
+Command Line Tools and double-click **Build Second Hand Smoke.command**.
+
+### Environment variables
+
+These apply when running from source. The application sets `DIT_PORT` itself —
+it reserves a free port so two copies cannot fight over one — and reads the
+rest from the environment as normal.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -121,6 +156,10 @@ Environment variables:
 | `DIT_OPERATOR` | login account | Name written into the MHL `<name>` field |
 | `DIT_BROWSE_ROOT` | — | Extra folder the picker is allowed to list |
 | `DIT_SLATE_FONT` | detected automatically | Font used to draw the dailies slate |
+
+`ffprobe` and `ffmpeg` are found on `PATH` and, failing that, in the usual
+Homebrew and MacPorts locations. That second search is what makes the packaged
+app work: an app launched from Finder does not inherit a login shell's `PATH`.
 
 To rehearse without hardware, point `DIT_SCAN_ROOT` at a folder of fake cards.
 `test_rig.py` builds and exercises exactly that.
@@ -381,11 +420,18 @@ out of scope.
 | `waveform.py` | Verified-master audio fingerprints and conservative FFT matching |
 | `handoff.py` | Checksummed review dailies and FCPXML/ALE/JSON handoff queue |
 | `storage.py` | Physical-drive identity, free-space and path-safety checks |
+| `version.py`, `VERSION` | The version number, read from one file |
+| `toolpaths.py` | Finding ffmpeg and ffprobe, from a shell or from Finder |
+| `server_main.py` | Server entry point used inside the macOS application |
+| `macos/` | The Mac application: Swift shell, build and DMG scripts |
+| `SecondHandSmoke.spec` | PyInstaller recipe that freezes the server |
 | `test_rig.py` | End-to-end tests including corruption and rot detection |
 | `MANUAL.md` | Full operator and technical manual |
 | `index.html`, `app.js`, `app.css` | Offline web UI |
 | `requirements.txt` | Locked major versions for Python dependencies |
-| `start.command` | Double-clickable macOS launcher |
+| `start.command` | Double-clickable launcher, for running from source |
+| `Build Second Hand Smoke.command` | Double-clickable app build |
+| `Make Second Hand Smoke DMG.command` | Double-clickable release build |
 | `push.command` | Double-clickable git commit and push |
 | `ROADMAP.md` | Where this is going, and what it will never do |
 | `LICENSE` | GPL-3.0 |

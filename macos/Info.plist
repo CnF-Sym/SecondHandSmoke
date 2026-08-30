@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleDisplayName</key><string>Second Hand Smoke</string>
+  <key>CFBundleExecutable</key><string>SecondHandSmoke</string>
+  <key>CFBundleIdentifier</key><string>com.cnfworks.secondhandsmoke</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleName</key><string>Second Hand Smoke</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <!-- Overwritten from ../VERSION by build_macos_app.sh. Keep in step anyway. -->
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>010</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>© 2026 CnF Works. Free software under the GNU General Public License v3.0.</string>
+
+  <!-- macOS asks the operator once, per application, before letting it read a
+       camera card or write to an external drive. Without these strings the
+       prompt has nothing to say and the request looks like something to deny.
+       A denied prompt does not produce an error: the card simply appears to
+       contain nothing, which is the worst possible failure for this tool. -->
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>Second Hand Smoke reads camera and sound cards, and writes verified copies to external drives. It never modifies, moves or deletes anything on a card, and it never formats anything.</string>
+  <key>NSNetworkVolumesUsageDescription</key>
+  <string>Second Hand Smoke writes verified copies to network destinations you choose, such as a NAS or a mounted offsite folder.</string>
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>Second Hand Smoke writes verified copies and reports to the destinations you choose.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>Second Hand Smoke writes verified copies and reports to the destinations you choose.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>Second Hand Smoke writes verified copies and reports to the destinations you choose.</string>
+</dict>
+</plist>

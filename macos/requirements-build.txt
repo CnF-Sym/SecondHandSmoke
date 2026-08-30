@@ -1,0 +1,4 @@
+# Build-time only. Installed into macos/.build-venv by build_macos_app.sh and
+# never shipped inside the application. Nothing here is a runtime dependency:
+# requirements.txt is still the whole list of what the server itself needs.
+pyinstaller>=6,<7

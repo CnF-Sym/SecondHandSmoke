@@ -41,7 +41,9 @@ import storage
 import sync
 import waveform
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Inside the packaged application the interface files are unpacked beside the
+# frozen modules rather than sitting next to this source file.
+BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 app = Flask(__name__, template_folder=BASE_DIR, static_folder=None)
 
 try:

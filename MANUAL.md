@@ -169,9 +169,31 @@ report keep that distinction explicit, and no downstream phase can turn
 Copies and verification work without ffmpeg; metadata is simply marked
 unavailable and the later phases say so.
 
-### Starting
+### Two ways to run it
 
-Double-click **`start.command`**, or from Terminal:
+**The application.** Open the DMG, drag Second Hand Smoke to Applications,
+double-click. Python, Flask, xxhash, NumPy and Pillow are all inside the bundle;
+nothing is installed on the machine and there is no first-launch build step.
+`macos/README.md` describes how the bundle is put together and how to build it.
+
+Three things behave differently in the application, all deliberately:
+
+- **The port is reserved, not fixed.** The wrapper asks the kernel for 3838 and
+  takes whatever is free if it is busy, then sets `DIT_PORT` for the server. Two
+  copies cannot fight over one port, and neither can silently attach to the
+  other's server.
+- **One server per catalog.** The server holds an exclusive lock beside the
+  catalog and refuses to start if another copy holds it. Two servers sharing one
+  SQLite file, near a format gate, is not a race worth having.
+- **The server cannot outlive the window.** It is terminated on quit, and it
+  also watches its parent process: a force quit or a crash of the window leaves
+  no server behind holding the catalog open.
+
+macOS asks once, per application, before it will let the app read a removable
+volume. A denial does not produce an error — cards simply appear to be empty.
+That is the first thing to check when a mounted card reads as blank.
+
+**From source.** Double-click **`start.command`**, or from Terminal:
 
 ```bash
 ./start.command
@@ -891,6 +913,17 @@ Constants: `AUTO_SCORE 0.62`, `AUTO_MARGIN 0.08`, `REVIEW_SCORE 0.35`,
 | `transcode_daily(...)` | The ffmpeg call that builds one review movie |
 | `build_fcpxml / build_ale / build_manifest / build_readme` | The four documents |
 | `preflight / start / cancel / day_summary` | Lifecycle and reporting |
+
+### `server_main.py` — the packaged server's entry point
+
+| Function | Purpose |
+|---|---|
+| `claim_single_instance()` | An exclusive lock beside the catalog; one server per catalog |
+| `watch_parent(interval)` | Exits if the launching application disappears |
+| `main()` | Locks, starts the watchdog, prints the banner, serves |
+
+`start.command` still runs `app.py` directly; this module is only the entry
+point used inside the application bundle. It adds no behaviour to the offload.
 
 ### `version.py` — the version number
 
