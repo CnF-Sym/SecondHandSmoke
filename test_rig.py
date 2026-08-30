@@ -1,5 +1,5 @@
 # Second Hand Smoke — verified card offload for camera and sound media.
-# Copyright (C) 2026  Brian / CnF Works
+# Copyright (C) 2026  CnF Works
 #
 # This program is free software: you can redistribute it and/or modify it
 # under the terms of the GNU General Public License as published by the Free

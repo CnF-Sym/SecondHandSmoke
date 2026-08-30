@@ -92,7 +92,13 @@ environment and installs the core packages plus optional phase helpers. Or use T
 ./start.command
 ```
 
-Open <http://127.0.0.1:3838>. Bound to loopback only, and the API additionally
+Open <http://127.0.0.1:3838>.
+
+Flask prints `WARNING: This is a development server` on startup. That warning is
+aimed at people exposing Flask to the internet. This server is bound to
+loopback, is reachable only from your own machine, and serves exactly one
+operator — the warning does not apply, and swapping in a production WSGI server
+would add a dependency without changing anything about how it runs. Bound to loopback only, and the API additionally
 refuses any request whose `Host` is not loopback and any state-changing request
 that did not come from the tool's own page — so a web page open in another tab
 cannot reach in and stop an offload.
