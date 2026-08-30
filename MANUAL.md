@@ -8,6 +8,8 @@ Version 0.1.0 — read from the `VERSION` file at the repository root.
 number in the manual, in the app's Info.plist and in every MHL `<tool>`
 field cannot drift apart.
 
+Support: <hello@cnfworks.com>
+
 > **On the name.** Second Hand Smoke is the product. FML is the File Management Library
 > underneath it — this manual is the only place that expansion is written out,
 > because by 4 am on a night shoot the acronym has usually acquired its second

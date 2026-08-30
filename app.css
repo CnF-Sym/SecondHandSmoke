@@ -281,3 +281,19 @@ input:focus,select:focus,button:focus-visible{
   padding:11px 18px; font-size:12px; max-width:80vw; z-index:20;
   box-shadow:0 8px 30px rgba(0,0,0,.4)}
 .toast.err{border-color:var(--danger); color:var(--danger)}
+
+
+/* Footer — the version, the licence, and where to write when it goes wrong.
+   Deliberately at the bottom of every screen rather than behind an About menu:
+   the person who needs the support address is the person having a bad night,
+   and they should not have to go looking for it. */
+.site-foot{margin:28px auto 40px;padding:14px 24px 0;max-width:1600px;
+  border-top:1px solid var(--line);color:var(--dim);
+  font-size:11px;line-height:1.7;letter-spacing:.02em}
+.site-foot a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+.site-foot a:hover{color:var(--text)}
+.foot-sep{opacity:.4;margin:0 6px}
+.foot-line{display:flex;flex-wrap:wrap;align-items:baseline}
+.foot-tools{margin-bottom:6px}
+.foot-tools.missing{color:var(--work)}
+.foot-tools b{font-weight:600}

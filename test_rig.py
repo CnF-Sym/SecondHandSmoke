@@ -1525,5 +1525,37 @@ second = subprocess.run(
 check("the lock is released when the server that held it exits",
       second.returncode == 0, second.stderr.strip())
 
+print("\n[22] the support address reaches every surface")
+
+# One definition, three places it has to appear. A DIT at 4am should find it on
+# whatever is in front of them: the screen, the report a producer forwarded, or
+# the notes inside the handoff package.
+address = version.SUPPORT_EMAIL
+check("there is a support address to publish", "@" in address, address)
+
+home_page = c.get("/").data.decode("utf-8", "replace")
+check("the interface footer carries the support address", address in home_page)
+check("the interface footer carries the version", version.VERSION in home_page)
+
+report_path, report_body = reports.day_report(day_id)
+check("the day report carries the support address", address in report_body)
+check("the day report says which build wrote it",
+      version.TOOL_STRING in report_body)
+
+notes_body = c.get(f"/api/day/{day_id}/handoff/notes").data.decode("utf-8", "replace")
+check("the handoff notes carry the support address", address in notes_body)
+
+readme_text = open("README.md", encoding="utf-8").read()
+check("the README carries the support address", address in readme_text)
+
+# The footer tells the operator what an absent ffmpeg costs. If that sentence
+# goes missing, a missing ffmpeg reads as a broken program.
+interface_source = open("app.js", encoding="utf-8").read()
+check("the interface explains what an absent ffmpeg does and does not break",
+      "the format gate are unaffected" in interface_source and
+      "not found" in interface_source)
+check("the interface reports tool discovery from the server",
+      '"tools"' in open("app.py", encoding="utf-8").read())
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

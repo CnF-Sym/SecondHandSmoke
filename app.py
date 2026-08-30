@@ -39,6 +39,7 @@ import proxies
 import reports
 import storage
 import sync
+import version
 import waveform
 
 # Inside the packaged application the interface files are unpacked beside the
@@ -218,7 +219,10 @@ def latest_job():
 @app.route("/")
 def index():
     return render_template("index.html", port=PORT,
-                           min_copies=reports.MIN_VERIFIED_COPIES)
+                           min_copies=reports.MIN_VERIFIED_COPIES,
+                           version=version.VERSION,
+                           support_email=version.SUPPORT_EMAIL,
+                           project_url=version.PROJECT_URL)
 
 
 @app.get("/static/app.css")
@@ -703,6 +707,11 @@ def state():
         "days": rows(db.q("SELECT * FROM days ORDER BY shoot_date DESC, name DESC")),
         "day": dict(day) if day else None,
         "min_copies": reports.MIN_VERIFIED_COPIES,
+        # Read, not re-detected: the interface polls this several times a
+        # minute and probing the filesystem on every poll would cost more than
+        # it tells anyone. A mid-shoot ffmpeg install is picked up by the
+        # existing refresh in the metadata path.
+        "tools": {"ffprobe": media.FFPROBE, "ffmpeg": proxies.FFMPEG},
         "destinations": [], "cards": [],
         "job": latest_job(),
         "sync": None,

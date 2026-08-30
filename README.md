@@ -448,6 +448,27 @@ files to confirm each fault is caught. It never touches mounted media.
 
 ---
 
+## Support
+
+**<hello@cnfworks.com>**
+
+The same address is in the app's footer, at the bottom of every day report, and
+inside the editorial handoff notes — so whoever is holding the problem at 4am
+can find it on whatever is in front of them.
+
+Verification bugs first. If this ever calls a card safe when it wasn't, say so
+immediately and everything else waits.
+
+When you write, the useful things to include are the version from the footer,
+what you were doing, and — if the app would not start —
+`~/Library/Logs/Second Hand Smoke/server.log`. Never send footage.
+
+Bugs and feature requests are also welcome as
+[GitHub issues](https://github.com/CnF-Sym/SecondHandSmoke/issues), which have
+the advantage of being searchable by the next person with the same problem.
+
+---
+
 ## Contributing
 
 Bug reports about *verification* are the most valuable thing you can send. If

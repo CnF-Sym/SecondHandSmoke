@@ -574,6 +574,29 @@ function computeSteps(s) {
   return steps.map((st, i) => ({ ...st, now: i === nowIndex }));
 }
 
+// ffmpeg is optional and external, and its absence is easy to misread as the
+// tool being broken. Say plainly which half still works, because the half that
+// still works is the half that decides whether a card can be formatted.
+function renderTools(tools) {
+  const box = $("toolStatus");
+  if (!box) return;
+  const t = tools || {};
+  if (t.ffmpeg && t.ffprobe) {
+    box.className = "foot-line foot-tools";
+    box.innerHTML = `ffmpeg found at <b>${esc(t.ffmpeg)}</b> · metadata, proxies,
+      timecode sync, waveform fallback and dailies are available`;
+    return;
+  }
+  const missing = [!t.ffmpeg && "ffmpeg", !t.ffprobe && "ffprobe"]
+    .filter(Boolean).join(" and ");
+  box.className = "foot-line foot-tools missing";
+  box.innerHTML = `<b>${esc(missing)} not found.</b>&nbsp; Offload, verification,
+    checksums, MHL manifests and the format gate are unaffected — a card that
+    clears is still safe to format. Metadata, proxies, timecode sync, waveform
+    fallback and dailies are unavailable until it is installed
+    (<code>brew install ffmpeg</code>); it is picked up without restarting.`;
+}
+
 function renderSteps(s) {
   const steps = computeSteps(s);
   $("stepTracker").innerHTML = steps.map(st => `
@@ -610,6 +633,7 @@ async function refresh() {
   renderHandoff(s.handoff, s.sync, s.day, s.job);
   renderCards(s.cards, s.day ? s.day.id : 0);
   renderSteps(s);
+  renderTools(s.tools);
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&
       ["done", "failed", "cancelled"].includes(s.job.state) && s.job.finished_epoch &&

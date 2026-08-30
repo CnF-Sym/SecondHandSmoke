@@ -47,3 +47,9 @@ VERSION = _read()
 NAME = "Second Hand Smoke"
 VENDOR = "CnF Works"
 TOOL_STRING = f"{NAME} {VERSION} ({VENDOR})"
+
+# Where someone who is stuck at 4am should write. This is the only definition:
+# the README, the interface footer, the day report and the handoff notes all
+# read it from here, so it can never be right in one place and stale in another.
+SUPPORT_EMAIL = "hello@cnfworks.com"
+PROJECT_URL = "https://github.com/CnF-Sym/SecondHandSmoke"
