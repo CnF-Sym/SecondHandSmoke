@@ -159,6 +159,28 @@ report keep that distinction explicit, and no downstream phase can turn
 
 ---
 
+### Interface conventions
+
+Four rules, so a change to one panel does not quietly break the language the
+rest of the screen speaks:
+
+- **Colour means state, never decoration.** Green cleared, amber working or
+  needs attention, red blocked or failed. The stripe down the side of a panel
+  lights up when that phase is reachable and stays grey when it is not.
+- **Nothing is hidden, only dimmed.** A phase you cannot use yet is greyed with
+  a line saying what unlocks it. Controls that vanish mid-shoot read as a
+  broken program.
+- **Monospace for machine data, the system face for sentences.** Paths, hashes
+  and timecode need character shape and alignment. Explanations do not, and
+  monospace prose is tiring to read at the end of a long day.
+- **Colour is never the only carrier.** Every status has words beside it, and
+  every step on the track states its name, count and state in its accessible
+  label. Every text colour in the palette clears WCAG AA on every surface it
+  is used on, and `test_rig.py` section [28] computes that rather than trusting
+  it.
+
+---
+
 ## 4. Installing and starting it
 
 ### Requirements

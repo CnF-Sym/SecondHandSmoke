@@ -9,17 +9,30 @@
   --safe:#67F13B; --safe-dim:#2B9B38;
   --work:#FFD326; --danger:#FF3B69; --danger-dim:#B72C50;
   --cyan:#18D6C5; --violet:#AE69F4; --pink:#FF3B80;
+  /* #55606F was the old hint colour. It sits at 2.9:1 against a panel, which
+     fails AA for body text and is genuinely hard to read on a cart monitor
+     with the brightness down. This clears 4.5:1 everywhere it is used while
+     still reading as secondary. */
+  --dim-2:#7C8798;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  /* Monospace is right for paths, hashes and timecode, where character shape
+     and alignment carry meaning. It is tiring for sentences, and this
+     interface explains itself in sentences. Prose gets the system face. */
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    system-ui, sans-serif;
   --grad:linear-gradient(100deg,var(--pink) 0 31%,var(--work) 31% 67%,var(--cyan) 67% 100%);
 }
 
 *{box-sizing:border-box}
 html,body{margin:0}
 body{
+  /* The glows and the scanline are turned down rather than off. They give the
+     window a bit of depth; at their old strength they were competing with the
+     status colours, which are the only things here that mean anything. */
   background:
-    linear-gradient(rgba(255,255,255,.012) 1px,transparent 1px),
-    radial-gradient(1100px 480px at 12% -10%, rgba(255,59,128,.11), transparent 60%),
-    radial-gradient(900px 420px at 100% 0%, rgba(24,214,197,.09), transparent 55%),
+    linear-gradient(rgba(255,255,255,.007) 1px,transparent 1px),
+    radial-gradient(1100px 480px at 12% -10%, rgba(255,59,128,.055), transparent 60%),
+    radial-gradient(900px 420px at 100% 0%, rgba(24,214,197,.045), transparent 55%),
     var(--bg);
   background-size:100% 4px,auto,auto,auto;
   color:var(--text);
@@ -88,7 +101,8 @@ header{
 .step.blocked .led{background:var(--danger)}
 .step.blocked .step-count{color:var(--danger); opacity:.8}
 
-.track-hint{margin:10px 0 0; font-size:12px; color:var(--dim); min-height:18px}
+.track-hint{margin:10px 0 0; font-size:12px; color:var(--dim); min-height:18px;
+  font-family:var(--sans); line-height:1.55}
 .track-hint b{color:var(--text); font-weight:600}
 .track-hint.blocked b{color:var(--danger)}
 
@@ -133,10 +147,11 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
    tool that makes features disappear mid-shoot is worse than one that greys
    them — but the screen stops shouting six equal invitations at you. */
 .panel.waiting{--panel-accent: var(--line)}
-.panel.waiting h2{color:#6E6B65}
+.panel.waiting h2{color:var(--dim-2)}
 .panel.waiting .note{opacity:.75}
 
-.note{color:var(--dim); font-size:12px; margin:0 0 12px}
+.note{color:var(--dim); font-size:12px; margin:0 0 12px; font-family:var(--sans);
+  line-height:1.55}
 .note code{color:var(--text)}
 .note.warn{color:var(--work)}
 .note.first-run{color:var(--cyan); border-left:2px solid var(--cyan);
@@ -150,7 +165,7 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
 .logo-drop.over{border-color:var(--cyan);background:rgba(24,214,197,.06);color:var(--text)}
 .logo-preview{max-height:56px;max-width:200px;width:auto;height:auto;display:block;
   background:#fff;border-radius:4px;padding:4px}
-.empty{color:var(--dim); font-size:12px; margin:4px 0 12px}
+.empty{color:var(--dim); font-size:12px; margin:4px 0 12px; font-family:var(--sans)}
 
 /* controls -------------------------------------------------------------- */
 .field-row{display:flex; gap:8px; margin:12px 0; flex-wrap:wrap}
@@ -158,7 +173,7 @@ input,select{
   flex:1 1 120px; min-width:0; background:var(--bg); color:var(--text);
   border:1px solid var(--line-hot); padding:8px 10px; font:inherit;
 }
-input::placeholder{color:#55606F}
+input::placeholder{color:var(--dim-2)}
 input:focus,select:focus,button:focus-visible{
   outline:2px solid var(--cyan); outline-offset:1px; border-color:transparent}
 
@@ -184,19 +199,17 @@ input:focus,select:focus,button:focus-visible{
 .btn:disabled{opacity:.32; cursor:not-allowed; border-color:var(--line)}
 
 /* the big one-button hero CTA -------------------------------------------- */
+/* This used to pulse, permanently. A control that never stops asking for
+   attention stops being a signal — and it was competing with the current step
+   on the track, which is the thing that should be pulling the eye. Solid green
+   at full width is already the loudest control on the screen. */
 .btn.hero{
   padding:14px 20px; font-size:12px; letter-spacing:.1em; width:100%;
   border:1px solid var(--safe); color:var(--bg); background:var(--safe);
-  box-shadow:0 0 0 0 rgba(47,224,138,.5); animation:pulse 2.4s ease-in-out infinite;
 }
-.btn.hero:hover{background:#4EF3A2}
-.btn.hero:disabled{animation:none; background:var(--panel-2); color:var(--dim);
+.btn.hero:hover{background:#4EF3A2; box-shadow:0 0 0 3px rgba(103,241,59,.18)}
+.btn.hero:disabled{background:var(--panel-2); color:var(--dim);
   border-color:var(--line); box-shadow:none}
-@keyframes pulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(47,224,138,.45)}
-  50%{box-shadow:0 0 0 8px rgba(47,224,138,0)}
-}
-@media (prefers-reduced-motion:reduce){ .btn.hero{animation:none} }
 
 .chips{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px}
 .chip{border:1px solid var(--line-hot); padding:4px 10px; font-size:11px;
@@ -230,14 +243,14 @@ input:focus,select:focus,button:focus-visible{
 .slot .slot-label .led{width:7px; height:7px; border-radius:50%; background:var(--line-hot)}
 .slot.filled{border-style:solid}
 .slot.filled.role-primary{border-color:var(--cyan)}
-.slot.filled.role-primary .led{background:var(--cyan); box-shadow:0 0 6px 0 rgba(63,208,224,.6)}
+.slot.filled.role-primary .led{background:var(--cyan); box-shadow:0 0 5px 0 rgba(63,208,224,.35)}
 .slot.filled.role-backup{border-color:var(--work)}
-.slot.filled.role-backup .led{background:var(--work); box-shadow:0 0 6px 0 rgba(242,169,60,.6)}
+.slot.filled.role-backup .led{background:var(--work); box-shadow:0 0 5px 0 rgba(242,169,60,.35)}
 .slot.filled.role-offsite{border-color:var(--violet)}
-.slot.filled.role-offsite .led{background:var(--violet); box-shadow:0 0 6px 0 rgba(185,139,240,.6)}
+.slot.filled.role-offsite .led{background:var(--violet); box-shadow:0 0 5px 0 rgba(185,139,240,.35)}
 .slot .slot-path{font-size:11px; color:var(--dim); overflow:hidden; text-overflow:ellipsis;
   white-space:nowrap}
-.slot .slot-hint{font-size:10px; color:#55606F}
+.slot .slot-hint{font-size:10px; color:var(--dim-2); font-family:var(--sans)}
 .slot .btn{padding:5px 9px; font-size:9px; align-self:flex-start; margin-top:auto}
 .slot.clickable{cursor:pointer; transition:border-color .15s, background .15s}
 .slot.clickable:hover{border-color:var(--cyan); background:var(--panel)}
@@ -282,8 +295,9 @@ input:focus,select:focus,button:focus-visible{
 .verdict.yes{color:var(--safe); background:rgba(47,224,138,.09);
   box-shadow:inset 0 0 0 2px rgba(47,224,138,.34)}
 .verdict.yes .lamp{background:var(--safe); box-shadow:0 0 12px 2px rgba(47,224,138,.8)}
-.verdict small{display:block; font-size:10px; font-weight:500;
-  letter-spacing:.09em; color:var(--dim); margin-top:7px; text-transform:none}
+.verdict small{display:block; font-size:11px; font-weight:500;
+  letter-spacing:.02em; color:var(--dim); margin-top:7px; text-transform:none;
+  font-family:var(--sans)}
 .verdict-text{display:flex; flex-direction:column; align-items:center}
 .slate-actions{display:flex; gap:8px; padding:11px 14px; flex-wrap:wrap;
   align-items:center}
@@ -297,11 +311,11 @@ input:focus,select:focus,button:focus-visible{
   flex:none}
 .status-line .text{font-size:14px; font-weight:700; font-variant-numeric:tabular-nums;
   color:var(--text)}
-.status-line.ok .lamp{background:var(--safe); box-shadow:0 0 10px 1px rgba(47,224,138,.7)}
+.status-line.ok .lamp{background:var(--safe); box-shadow:0 0 8px 0 rgba(47,224,138,.45)}
 .status-line.ok .text{color:var(--safe)}
-.status-line.warn .lamp{background:var(--work); box-shadow:0 0 10px 1px rgba(242,169,60,.7)}
+.status-line.warn .lamp{background:var(--work); box-shadow:0 0 8px 0 rgba(242,169,60,.45)}
 .status-line.warn .text{color:var(--work)}
-.status-line.bad .lamp{background:var(--danger); box-shadow:0 0 10px 1px rgba(255,90,86,.7)}
+.status-line.bad .lamp{background:var(--danger); box-shadow:0 0 8px 0 rgba(255,90,86,.45)}
 .status-line.bad .text{color:var(--danger)}
 .status-line.idle .lamp{background:var(--line-hot)}
 .status-line.idle .text{color:var(--dim); font-weight:600}
@@ -322,6 +336,7 @@ input:focus,select:focus,button:focus-visible{
   padding-left:9px}
 .errors div.warn{color:var(--work); border-left-color:var(--work)}
 .scan-problem{color:var(--danger); font-size:11px; background:var(--panel);
+  font-family:var(--sans);
   border-left:2px solid var(--danger); padding:8px 10px}
 
 /* scanned-card ingest card ------------------------------------------------ */

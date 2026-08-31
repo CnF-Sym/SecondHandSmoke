@@ -1839,5 +1839,54 @@ check("a first run explains what a shoot day even is",
 check("the logo does not out-shout the track",
       ".brand-logo{height:34px" in ui_css)
 
+print("\n[28] readable at 4am")
+
+import re as _re
+
+
+def _relative_luminance(hex_colour):
+    value = hex_colour.lstrip("#")
+    channels = [int(value[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    linear = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+              for c in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def contrast(a, b):
+    la, lb = _relative_luminance(a), _relative_luminance(b)
+    high, low = max(la, lb), min(la, lb)
+    return (high + 0.05) / (low + 0.05)
+
+
+tokens = dict(_re.findall(r"--([a-z0-9-]+)\s*:\s*(#[0-9A-Fa-f]{6})", ui_css))
+surfaces = ["bg", "panel", "panel-2"]
+check("the palette still defines its surfaces and text colours",
+      all(name in tokens for name in surfaces + ["text", "dim", "dim-2"]),
+      ", ".join(sorted(tokens)))
+
+# This interface is read on a cart monitor, at night, by someone who has been
+# awake for sixteen hours. Every colour that carries words has to clear WCAG AA
+# for body text on every surface it is used on. Status colours included: a
+# warning nobody can read is not a warning.
+for name in ("text", "dim", "dim-2", "safe", "work", "danger", "cyan"):
+    if name not in tokens:
+        continue
+    worst = min(contrast(tokens[name], tokens[surface]) for surface in surfaces)
+    check(f"--{name} is readable on every surface ({worst:.2f}:1, AA needs 4.5)",
+          worst >= 4.5, tokens[name])
+
+# Secondary text must still read as secondary, or the hierarchy is gone.
+if "dim-2" in tokens and "dim" in tokens:
+    check("the quieter text colour is genuinely quieter than the main one",
+          contrast(tokens["dim-2"], tokens["bg"]) < contrast(tokens["dim"], tokens["bg"]))
+
+check("prose is set in a face made for prose",
+      "--sans:" in ui_css and "font-family:var(--sans)" in ui_css)
+check("paths, hashes and timecode keep the monospace face", "--mono:" in ui_css)
+
+# A control that never stops asking for attention has stopped being a signal.
+check("nothing on screen pulses forever",
+      "infinite" not in ui_css, "an infinite animation is still defined")
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
