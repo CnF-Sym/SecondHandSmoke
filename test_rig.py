@@ -16,6 +16,7 @@
 """Self-contained end-to-end exercise of the ingest safety contract."""
 
 import atexit
+import csv
 import getpass
 import json
 import os
@@ -2204,6 +2205,190 @@ check("presets never insert a destination themselves",
 check("presets never touch the format gate or the copy records",
       "card_status" not in preset_source and "INSERT INTO copies" not in preset_source
       and "UPDATE copies" not in preset_source)
+
+print("\n[32] renaming happens on the destination and nowhere else")
+
+import naming
+
+# --- the pure part, where the risk actually lives ------------------------
+rename_card = {"roll": "R001", "label": "R001_CARD", "kind": "camera", "id": 0}
+rename_day = {"project": "PROJECT_01", "name": "DAY_01", "shoot_date": "2026-01-16"}
+sample_files = [
+    {"id": 11, "rel_path": "CLIPS/R001C002.MXF", "category": "video",
+     "scene": "9", "take_name": "2"},
+    {"id": 12, "rel_path": "CLIPS/R001C002.XML", "category": "sidecar"},
+    {"id": 13, "rel_path": "CLIPS/R001C001.MXF", "category": "video",
+     "scene": "9", "take_name": "1"},
+    {"id": 14, "rel_path": "CLIPS/R001C001.XML", "category": "sidecar"},
+]
+
+check("the default pattern renames nothing",
+      all(not e["renamed"] for e in
+          naming.plan(sample_files, rename_card, rename_day)))
+
+planned = naming.plan(sample_files, rename_card, rename_day, "{roll}_{index}")
+by_source = {e["rel_path"]: e["dest_name"] for e in planned}
+check("a pattern renames every file on the card",
+      by_source["CLIPS/R001C001.MXF"] == "R001_0001.MXF"
+      and by_source["CLIPS/R001C002.MXF"] == "R001_0002.MXF", json.dumps(by_source))
+
+# Cameras write CLIP.MXF beside CLIP.XML. Break that pair and no NLE finds the
+# metadata again.
+check("a sidecar is renamed with the clip it belongs to",
+      by_source["CLIPS/R001C001.XML"] == "R001_0001.XML"
+      and by_source["CLIPS/R001C002.XML"] == "R001_0002.XML")
+
+# The one that stops a resumed offload copying a second file beside the first.
+shuffled = naming.plan(list(reversed(sample_files)), rename_card, rename_day,
+                       "{roll}_{index}")
+check("the plan is identical whatever order the files arrive in",
+      {e["rel_path"]: e["dest_name"] for e in shuffled} == by_source)
+
+check("missing metadata falls back to the original name, never to an empty one",
+      naming.plan([{"id": 1, "rel_path": "X/notes.txt", "category": "sidecar"}],
+                  rename_card, rename_day, "{scene}_{take}")[0]["dest_name"]
+      == "notes.txt")
+
+check("the extension is carried over exactly",
+      naming.plan([{"id": 1, "rel_path": "A.MXF", "category": "video"}],
+                  rename_card, rename_day, "{roll}")[0]["dest_name"] == "R001.MXF")
+
+check("a pattern cannot contain a path separator",
+      bool(naming.validate("{roll}/{index}")))
+check("an unknown token is refused with the list of real ones",
+      "{project}" in (naming.validate("{nope}") or ""))
+check("an empty pattern is refused", bool(naming.validate("")))
+check("unsafe characters never reach the filesystem",
+      naming.sanitise("A/B:C*D") == "A_B_C_D")
+check("a Windows reserved name is defused",
+      naming.sanitise("CON").lower().startswith("con") and naming.sanitise("CON") != "CON")
+
+colliding = naming.plan(sample_files, rename_card, rename_day, "{roll}_{scene}")
+clashes = naming.collisions(colliding)
+check("two takes that would share a name are reported, not silently suffixed",
+      bool(clashes) and all(len(sources) == 2 for _, sources in clashes)
+      and any("R001C001.MXF" in sources[0] + sources[1] for _, sources in clashes),
+      json.dumps(clashes))
+
+# --- and now for real, through the copy path -----------------------------
+write_fixture("R001_CARD/CLIPS/R001C001.MXF", 210, 12 * 1024)
+write_text_fixture("R001_CARD/CLIPS/R001C001.XML", "<clip>one</clip>\n")
+write_fixture("R001_CARD/CLIPS/R001C002.MXF", 211, 12 * 1024)
+
+status, body = post("/api/day", project="PROJECT_01", name="DAY_RENAME",
+                    shoot_date="2026-01-19")
+rename_day_id = body["day_id"]
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+
+status, body = post(f"/api/day/{rename_day_id}/naming",
+                    pattern_camera="{day}_{roll}_{index}")
+check("a naming pattern is stored on the day", status == 200, body)
+status, body = post(f"/api/day/{rename_day_id}/naming", pattern_camera="{nope}")
+check("a pattern that cannot work is refused while someone is looking at it",
+      status == 400, body)
+
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "R001_CARD" in c_["path"]), None)
+check("the renaming card is found by the scanner", bool(fingerprint))
+status, body = post("/api/register", fingerprint=fingerprint)
+check("the renaming card registers", status == 200, body)
+rename_card_id = body["card_id"]
+
+status, preview = get(f"/api/day/{rename_day_id}/naming/preview")
+this_card = next(card for card in preview["cards"] if card["card_id"] == rename_card_id)
+check("the preview says what will change before anything is copied",
+      this_card["renamed"] == this_card["total"] and this_card["total"] == 3,
+      json.dumps(this_card["sample"]))
+
+source_listing_before = sorted(os.listdir(os.path.join(CARDS, "R001_CARD", "CLIPS")))
+source_bytes_before = open(os.path.join(CARDS, "R001_CARD/CLIPS/R001C001.MXF"), "rb").read()
+
+status, body = post(f"/api/offload/{rename_card_id}")
+check("the renaming offload starts", status == 200, body)
+wait_job()
+
+gate = reports.card_status(rename_card_id)
+check("a renamed card clears the gate exactly as any other card does",
+      gate["safe"], gate["reason"])
+
+written = sorted(os.listdir(os.path.join(
+    DRIVE_A, "PROJECT_01", "DAY_RENAME", "CAMERA", "R001", "CLIPS")))
+check("files landed under the new names",
+      written == ["DAY_RENAME_R001_0001.MXF", "DAY_RENAME_R001_0001.XML",
+                  "DAY_RENAME_R001_0002.MXF"], ", ".join(written))
+
+check("the source card still has its original names",
+      sorted(os.listdir(os.path.join(CARDS, "R001_CARD", "CLIPS")))
+      == source_listing_before, ", ".join(source_listing_before))
+check("the source card's bytes are untouched",
+      open(os.path.join(CARDS, "R001_CARD/CLIPS/R001C001.MXF"), "rb").read()
+      == source_bytes_before)
+check("the catalog still knows every file by its name on the card",
+      db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND rel_path LIKE ?",
+            (rename_card_id, "CLIPS/R001C%"))["c"] == 3)
+
+# The manifest, and both names.
+rename_dest = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primary'",
+                    (rename_day_id,))
+mhl_path = reports.write_mhl(rename_card_id, rename_dest["id"])
+check("a manifest is written for a renamed card", bool(mhl_path), mhl_path)
+mhl_body = open(mhl_path, encoding="utf-8").read()
+check("the manifest is still well-formed XML", bool(ET.fromstring(mhl_body)))
+check("the manifest lists the names the files were written under",
+      "DAY_RENAME_R001_0001.MXF" in mhl_body)
+check("the manifest also records what each file was called on the card",
+      "<!-- source: R001C001.MXF -->" in mhl_body)
+check("no extra element was added inside <hash>, which would break the schema",
+      all(child.tag in ("file", "size", "creationdate", "lastmodificationdate",
+                        "md5", "sha1", "xxhash", "xxhash64", "xxhash64be",
+                        "null", "hashdate")
+          for hash_el in ET.fromstring(mhl_body).findall("hash")
+          for child in hash_el))
+
+names_csv = os.path.splitext(mhl_path)[0] + "_NAMES.csv"
+check("a machine-readable name map is written beside the manifest",
+      os.path.isfile(names_csv))
+if os.path.isfile(names_csv):
+    mapping = list(csv.reader(open(names_csv, encoding="utf-8")))
+    check("the name map has both names and the hash for every renamed file",
+          mapping[0] == ["original", "renamed", "size", "xxhash64be"]
+          and len(mapping) == 4, json.dumps(mapping[:2]))
+
+# Half a card named one way and half the other is not a resumable state.
+db.ex("UPDATE days SET pattern_camera=? WHERE id=?",
+      ("{roll}_{index}", rename_day_id))
+refusal = offload.preflight(rename_card_id, "offload", 2)
+check("changing the pattern on a half-copied card is refused with both names",
+      refusal and "was already copied as" in refusal, refusal)
+db.ex("UPDATE days SET pattern_camera=? WHERE id=?",
+      ("{day}_{roll}_{index}", rename_day_id))
+check("putting the pattern back makes the card workable again",
+      offload.preflight(rename_card_id, "offload", 2) is None)
+
+# A colliding pattern must never reach the copy loop.
+db.ex("UPDATE days SET pattern_camera=? WHERE id=?", ("{roll}", rename_day_id))
+refusal = offload.preflight(rename_card_id, "offload", 2)
+check("a colliding pattern is refused before a byte is copied",
+      refusal and "would both be written" in refusal, refusal)
+db.ex("UPDATE days SET pattern_camera=? WHERE id=?",
+      ("{day}_{roll}_{index}", rename_day_id))
+
+# The day report has to show both names too, since it is what gets forwarded.
+rename_report = reports.render_html(reports.day_data(rename_day_id))
+check("the day report shows what each file was called on the card",
+      "R001C001.MXF" in rename_report)
+check("the day report shows what it was written as",
+      "DAY_RENAME_R001_0001.MXF" in rename_report)
+check("the day report says renaming happened on the destination only",
+      "The card was not touched" in rename_report)
+
+# Structural: naming decides names and nothing else.
+naming_source = open("naming.py", encoding="utf-8").read()
+check("naming never touches the database or the filesystem",
+      "import db" not in naming_source and "open(" not in naming_source
+      and "card_status" not in naming_source)
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

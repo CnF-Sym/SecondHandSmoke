@@ -41,6 +41,7 @@ import xxhash
 import cards
 import db
 import media
+import naming
 import storage
 
 CHUNK = 4 * 1024 * 1024
@@ -106,6 +107,36 @@ def dest_path_for(dest_root, project, day_name, card, rel_path):
     return target
 
 
+def pattern_for(day, kind):
+    """The naming pattern this day uses for this kind of card.
+
+    NULL or empty means the default, which renames nothing. Renaming is
+    something an operator asks for, never something that happens to them.
+    """
+    column = "pattern_sound" if kind == "sound" else "pattern_camera"
+    try:
+        value = day[column]
+    except (IndexError, KeyError):
+        value = None
+    return (value or "").strip() or naming.DEFAULT_PATTERN
+
+
+def name_plan(card, day):
+    """Every destination name for this card, keyed by file id.
+
+    Computed once per job from the card's whole file list, so the index token
+    is stable and a resumed offload lands on exactly the paths the interrupted
+    one was heading for.
+    """
+    rows = db.q("""SELECT f.id, f.rel_path, f.category,
+                          m.scene, m.take_name, m.reel_name
+                   FROM files f LEFT JOIN media_metadata m ON m.file_id=f.id
+                   WHERE f.card_id=? ORDER BY f.rel_path""", (card["id"],))
+    planned = naming.plan([dict(row) for row in rows], card, day,
+                          pattern_for(day, card["kind"]))
+    return {entry["id"]: entry for entry in planned}
+
+
 def _card_source_problem(card):
     if not os.path.isdir(card["source_path"]):
         return f"Card is not mounted at {card['source_path']}"
@@ -122,7 +153,7 @@ def _card_source_problem(card):
     return None
 
 
-def _target_collision(files, dests, day, card):
+def _target_collision(files, dests, day, card, plan=None):
     """Refuse to start if two source files would land on one destination path.
 
     The roll-folder strip in dest_path_for() means a card holding both
@@ -130,22 +161,62 @@ def _target_collision(files, dests, day, card):
     ``SOUND/CRACK_R01/take1.wav``. Verification would eventually catch the
     overwrite as a checksum mismatch, but it would read like a failing drive.
     Catch it up front and name both files instead.
+
+    Renaming makes this far more likely — {scene}_{take} across two cameras
+    collides immediately — so the check runs on the resolved names. It refuses
+    rather than adding a silent _2: two takes nobody can tell apart six weeks
+    later is worse than an offload that would not start.
     """
     if not dests:
         return None
+    plan = plan or {}
     seen = {}
     for file_row in files:
+        entry = plan.get(file_row["id"])
+        relative = entry["dest_rel_path"] if entry else file_row["rel_path"]
         try:
             target = dest_path_for(dests[0]["path"], day["project"], day["name"],
-                                   card, file_row["rel_path"])
+                                   card, relative)
         except ValueError as exc:
             return f"{file_row['rel_path']}: {exc}"
         key = os.path.normcase(target)
         if key in seen:
+            renamed = entry and entry["renamed"]
             return (f"{file_row['rel_path']} and {seen[key]} would both be written "
-                    f"to {os.path.basename(target)} on every destination. Rename one "
-                    "on a copy of the card, or offload them as separate rolls.")
+                    f"to {os.path.basename(target)} on every destination. "
+                    + ("Change the naming pattern so it tells them apart."
+                       if renamed else
+                       "Rename one on a copy of the card, or offload them as "
+                       "separate rolls."))
         seen[key] = file_row["rel_path"]
+    return None
+
+
+def _pattern_changed(files, dests, plan):
+    """Refuse to resume a card under a different pattern than it started with.
+
+    Half a card named one way and half the other is not a resumable state: the
+    already-verified copies keep their old paths, the new ones land beside
+    them, and the gate counts both as present. Whoever changed the pattern
+    almost certainly did not mean to do it to a card that is already half
+    copied.
+    """
+    for file_row in files:
+        entry = plan.get(file_row["id"])
+        if not entry:
+            continue
+        for dest in dests:
+            row = db.q1("SELECT dest_path FROM copies WHERE file_id=? AND "
+                        "destination_id=? AND state IN ('copied','verified')",
+                        (file_row["id"], dest["id"]))
+            if not row or not row["dest_path"]:
+                continue
+            if os.path.basename(row["dest_path"]) != entry["dest_name"]:
+                return (f"{file_row['rel_path']} was already copied as "
+                        f"{os.path.basename(row['dest_path'])}, but the naming "
+                        f"pattern now makes it {entry['dest_name']}. Put the "
+                        f"pattern back, or start this card again on a clean "
+                        f"destination folder.")
     return None
 
 
@@ -178,10 +249,17 @@ def preflight(card_id, mode, min_copies):
                current["volume_uuid"], dest["id"]))
 
     if mode == "offload":
+        problem = naming.validate(pattern_for(day, card["kind"]))
+        if problem:
+            return problem
         files = db.q("SELECT * FROM files WHERE card_id=?", (card_id,))
-        collision = _target_collision(files, dests, day, card)
+        plan = name_plan(card, day)
+        collision = _target_collision(files, dests, day, card, plan)
         if collision:
             return collision
+        changed = _pattern_changed(files, dests, plan)
+        if changed:
+            return changed
         for dest, current in checked:
             required = 0
             for file_row in files:
@@ -221,6 +299,7 @@ class Job:
         self.phase = ""
         self.errors = []
         self.warnings = []
+        self.plan = {}
         self.cancel = threading.Event()
         self.job_row = None
         self.started_epoch = None
@@ -300,9 +379,16 @@ class Job:
             (self.card_id, "running", db.now()))
 
         files = db.q("SELECT * FROM files WHERE card_id=? ORDER BY rel_path", (self.card_id,))
-        collision = _target_collision(files, dests, day, card)
+        # One plan for the whole card, computed once. Every destination path
+        # below comes from it, so a resumed job cannot land somewhere else.
+        plan = name_plan(card, day)
+        collision = _target_collision(files, dests, day, card, plan)
         if collision:
             raise RuntimeError(collision)
+        changed = _pattern_changed(files, dests, plan)
+        if changed:
+            raise RuntimeError(changed)
+        self.plan = plan
         # Work out what is genuinely left to do, so a resumed job doesn't
         # re-copy 400 GB it already verified.
         todo = []
@@ -332,7 +418,8 @@ class Job:
                 copies_needed = 0
                 for d, row in per_dest:
                     path = row["dest_path"] if row else dest_path_for(
-                        d["path"], day["project"], day["name"], card, f["rel_path"]
+                        d["path"], day["project"], day["name"], card,
+                        plan[f["id"]]["dest_rel_path"]
                     )
                     if (not os.path.exists(path) or os.path.getsize(path) != f["size"]
                             or not (row and row["state"] == "copied")):
@@ -365,7 +452,8 @@ class Job:
             targets = []
             for d, row in per_dest:
                 dp = row["dest_path"] if row else dest_path_for(
-                    d["path"], day["project"], day["name"], card, f["rel_path"])
+                    d["path"], day["project"], day["name"], card,
+                    self.plan[f["id"]]["dest_rel_path"])
                 targets.append((d, dp))
 
             if self.mode == "verify":

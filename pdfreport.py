@@ -249,6 +249,11 @@ def _card_heading(rl, styles, entry, story):
     story.append(rl["Paragraph"](
         f"{_esc(gate['reason'])} &nbsp;·&nbsp; {len(entry['files'])} files "
         f"&nbsp;·&nbsp; {_esc(reports.human_bytes(c['total_bytes']))}", styles["sub"]))
+    if entry.get("renamed_count"):
+        story.append(rl["Paragraph"](
+            f"{entry['renamed_count']} of {len(entry['files'])} files were renamed "
+            f"on the destination; the card was not touched. Original names are in "
+            f"the manifest and in the _NAMES.csv beside it.", styles["sub"]))
     story.append(rl["Spacer"](1, 4))
 
 

@@ -847,6 +847,8 @@ must be `application/json` and must come from the tool's own origin.
 | `POST` | `/api/day/<day>/waveform` | Run the waveform fallback |
 | `POST` | `/api/day/<day>/handoff?rebuild=1` | Build the editorial handoff |
 | `GET` | `/api/day/<day>/handoff/notes` | The operator notes, rendered |
+| `POST` | `/api/day/<id>/naming` | Store the day's patterns. Body: `pattern_camera`, `pattern_sound` |
+| `GET` | `/api/day/<id>/naming/preview` | What every registered card would be called |
 | `GET` | `/api/presets` | Every preset folder and its presets |
 | `POST` | `/api/preset` | Save the active day's setup. Body: `name`, `folder_id` |
 | `POST` | `/api/preset/<id>/apply` | Attach a preset's drives to the active day |
@@ -1044,6 +1046,24 @@ One function, because there is more than one way to ask: typed into the
 interface, or applied from a preset. A preset that could attach a drive by a
 slacker set of rules than the interface does would be a hole straight through
 the two-drive requirement.
+
+### `naming.py` — token patterns
+
+| Function | Purpose |
+|---|---|
+| `validate(pattern)` | None, or a sentence saying why the pattern cannot work |
+| `resolve(pattern, facts)` | One stem, sanitised; `""` if it resolved to nothing |
+| `plan(files, card, day, pattern)` | Every destination name for a card |
+| `collisions(planned)` | Names two source files would both claim |
+| `group_key(rel_path)` | Files renamed together: same folder, same stem |
+| `DEFAULT_PATTERN` | `{original}` — renaming is asked for, never automatic |
+
+Deliberately pure: no database, no filesystem, no clock. That is not tidiness —
+a function with no hidden inputs is one whose output can be proven identical
+across a cancel and a resume, and a rename that came out differently the second
+time would copy a second file beside the first while the gate counted both.
+`{index}` is computed from the card's groups in sorted order for the same
+reason.
 
 ### `presets.py` — saved job configurations
 

@@ -66,6 +66,23 @@
       </div>
     </section>
 
+    <section class="panel" id="namingPanel">
+      <h2>Naming</h2>
+      <p class="note">Standardise names across cameras. Renaming happens on the
+        destination only — the card is never written to, and the manifest records
+        both the original name and the new one.</p>
+      <div class="field-row">
+        <input id="patternCamera" placeholder="Camera pattern, e.g. {day}_{roll}_{index}">
+      </div>
+      <div class="field-row">
+        <input id="patternSound" placeholder="Sound pattern, e.g. {roll}_{scene}_{take}">
+      </div>
+      <button class="btn ghost" onclick="saveNaming()">Save naming</button>
+      <button class="btn ghost" onclick="previewNaming()">Preview names</button>
+      <p class="note" id="namingTokens"></p>
+      <div id="namingPreview"></div>
+    </section>
+
     <section class="panel" id="reportPanel">
       <h2>Reports</h2>
       <p class="note" id="pdfNote"></p>

@@ -253,6 +253,42 @@ path is not the physical drive the preset was saved with, it is attached and
 you are told — drives get rotated, cloned and relabelled, but "SHOW_A already
 has Monday on it" quietly ceasing to be true is worth a sentence.
 
+## Naming
+
+Standardise names across cameras with a token pattern per card kind, saved in
+a preset so it comes back tomorrow:
+
+`{project}` `{day}` `{date}` `{roll}` `{card}` `{original}` `{scene}` `{take}`
+`{camera}` `{index}`
+
+`{original}` is the default, so **nothing is renamed unless you ask for it**.
+Preview what a pattern would do before any copy starts — the interface lists
+every file and what it would become.
+
+The rules it holds to:
+
+- **Renaming happens on the destination. The card is never written to.** A
+  rename on a card is an edit to the only copy in existence.
+- **The manifest records both names.** The MHL's `<file>` carries the name the
+  file was written under, an XML comment above each hash carries the name it
+  had on the card, and a `_NAMES.csv` beside the manifest is the
+  machine-readable map. The MHL stays valid against the ASC MHL 1.1 schema,
+  which does not allow extra elements — a manifest Silverstack or ShotPut
+  refuses to read is worse than no manifest.
+- **Sidecars stay with their clip.** Files sharing a stem are renamed as a
+  group, so `CLIP.MXF` and `CLIP.XML` never come apart.
+- **The extension is carried over exactly**, case included.
+- **Names are deterministic.** `{index}` is computed from the card's own files
+  in sorted order, never from job progress, so an interrupted offload resumes
+  onto the identical paths instead of copying a second file beside the first.
+- **Collisions are refused, never suffixed.** If a pattern would write two
+  files to one name, the offload will not start and both files are named. Two
+  takes nobody can tell apart six weeks later is worse than a job that stops.
+- **Changing the pattern on a half-copied card is refused**, because half a
+  card named one way and half the other is not a resumable state.
+
+Missing metadata degrades to the original name rather than to `A001__.MXF`.
+
 ---
 
 ## Reports
@@ -522,6 +558,7 @@ out of scope.
 | `storage.py` | Physical-drive identity, free-space and path-safety checks |
 | `destinations.py` | Attaching a drive to a day — the one route, used by both |
 | `presets.py` | Saved job configurations and their folders |
+| `naming.py` | Resolving a token pattern into destination names |
 | `version.py`, `VERSION` | The version number, read from one file |
 | `toolpaths.py` | Finding ffmpeg and ffprobe, from a shell or from Finder |
 | `server_main.py` | Server entry point used inside the macOS application |

@@ -37,6 +37,7 @@ import db
 import destinations
 import handoff
 import media
+import naming
 import offload
 import pdfreport
 import presets
@@ -684,6 +685,60 @@ def manifest(card_id):
     return jsonify(ok=True, paths=written)
 
 
+@app.post("/api/day/<int:day_id>/naming")
+def set_naming(day_id):
+    """Store this day's naming patterns.
+
+    Validated here rather than at copy time, so a pattern that cannot work is
+    refused while someone is looking at it — not at 4am with a card in the
+    reader.
+    """
+    if not db.q1("SELECT id FROM days WHERE id=?", (day_id,)):
+        return jsonify(error="Unknown shoot day"), 404
+    body = request.get_json(silent=True) or {}
+    values = {}
+    for key in ("pattern_camera", "pattern_sound"):
+        pattern = (body.get(key) or "").strip() or naming.DEFAULT_PATTERN
+        problem = naming.validate(pattern)
+        if problem:
+            return jsonify(error=problem), 400
+        values[key] = pattern
+    db.ex("UPDATE days SET pattern_camera=?, pattern_sound=? WHERE id=?",
+          (values["pattern_camera"], values["pattern_sound"], day_id))
+    return jsonify(ok=True, **values)
+
+
+@app.get("/api/day/<int:day_id>/naming/preview")
+def naming_preview(day_id):
+    """What every registered card on this day would be called.
+
+    A filter or a pattern nobody previewed is a pattern nobody understood, and
+    this is the cheapest possible way to look before the copy starts.
+    """
+    day = db.q1("SELECT * FROM days WHERE id=?", (day_id,))
+    if not day:
+        return jsonify(error="Unknown shoot day"), 404
+    out = []
+    for card in db.q("SELECT * FROM cards WHERE day_id=? ORDER BY roll, label",
+                     (day_id,)):
+        plan = offload.name_plan(card, day)
+        entries = sorted(plan.values(), key=lambda e: e["rel_path"])
+        clashes = naming.collisions(entries)
+        out.append({
+            "card_id": card["id"],
+            "label": card["roll"] or card["label"],
+            "kind": card["kind"],
+            "pattern": offload.pattern_for(day, card["kind"]),
+            "renamed": sum(1 for e in entries if e["renamed"]),
+            "total": len(entries),
+            "collisions": [{"name": os.path.basename(name), "sources": sources}
+                           for name, sources in clashes],
+            "sample": [{"from": e["original_name"], "to": e["dest_name"],
+                        "renamed": e["renamed"]} for e in entries[:12]],
+        })
+    return jsonify(cards=out)
+
+
 @app.get("/api/presets")
 def list_presets():
     return jsonify(folders=presets.list_all())
@@ -848,6 +903,14 @@ def state():
         "branding": {"production": db.setting(pdfreport.SETTING_PRODUCTION) or "",
                      "logo": db.setting(pdfreport.SETTING_LOGO) or ""},
         "presets": presets.list_all(),
+        "naming": {
+            "tokens": list(naming.TOKENS),
+            "default": naming.DEFAULT_PATTERN,
+            "pattern_camera": (day["pattern_camera"] if day else "")
+                              or naming.DEFAULT_PATTERN,
+            "pattern_sound": (day["pattern_sound"] if day else "")
+                             or naming.DEFAULT_PATTERN,
+        },
         "destinations": [], "cards": [],
         "job": latest_job(),
         "sync": None,

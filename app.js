@@ -492,6 +492,65 @@ async function applyPreset(id) {
   refresh();
 }
 
+// Naming. {original} is the default, so nothing is renamed unless someone asks
+// for it, and the preview exists because a pattern nobody looked at is a
+// pattern nobody understood.
+function renderNaming(state) {
+  const naming = state.naming || {};
+  if (document.activeElement !== $("patternCamera")) {
+    $("patternCamera").value = naming.pattern_camera || "";
+  }
+  if (document.activeElement !== $("patternSound")) {
+    $("patternSound").value = naming.pattern_sound || "";
+  }
+  $("namingTokens").innerHTML = "Tokens: "
+    + (naming.tokens || []).map(t => `<code>{${esc(t)}}</code>`).join(" ")
+    + `. <code>${esc(naming.default || "{original}")}</code> keeps camera names.`;
+}
+
+async function saveNaming() {
+  if (!activeDayId) return toast("Start a shoot day first.", true);
+  try {
+    await api(`/api/day/${activeDayId}/naming`, { method: "POST",
+      body: JSON.stringify({
+        pattern_camera: $("patternCamera").value.trim(),
+        pattern_sound: $("patternSound").value.trim(),
+      }) });
+    toast("Naming saved.");
+    previewNaming();
+  } catch (err) { /* api() has already said why */ }
+  refresh();
+}
+
+async function previewNaming() {
+  const box = $("namingPreview");
+  if (!activeDayId) return toast("Start a shoot day first.", true);
+  let result;
+  try {
+    result = await api(`/api/day/${activeDayId}/naming/preview`);
+  } catch (err) { return; }
+  if (!result.cards.length) {
+    box.innerHTML = '<p class="empty">Register a card to see what it would be called.</p>';
+    return;
+  }
+  box.innerHTML = result.cards.map(card => {
+    const clashes = card.collisions.map(clash =>
+      `<div class="scan-problem">${esc(clash.name)} would be written twice —
+        from ${clash.sources.map(esc).join(" and ")}. Change the pattern so it
+        tells them apart; the offload will not start like this.</div>`).join("");
+    const rows = card.sample.map(item => `<div class="row">
+        <span class="grow path">${esc(item.from)}</span>
+        <span class="path">${item.renamed ? "→ " + esc(item.to) : "unchanged"}</span>
+      </div>`).join("");
+    const more = card.total > card.sample.length
+      ? `<div class="row"><span class="grow empty">…and ${card.total - card.sample.length} more</span></div>`
+      : "";
+    return `<div class="preset-folder"><span>${esc(card.label)} ·
+        ${card.renamed} of ${card.total} renamed</span></div>
+      ${clashes}<div class="list">${rows}${more}</div>`;
+  }).join("");
+}
+
 function renderTools(tools) {
   const box = $("toolStatus");
   if (!box) return;
@@ -1008,6 +1067,7 @@ async function refresh() {
   renderTools(s.tools);
   renderReports(s);
   renderPresets(s);
+  renderNaming(s);
 
   // Sync, proxies and dailies all read from verified copies, so none of them
   // can do anything until at least one card has cleared the gate.
@@ -1017,6 +1077,7 @@ async function refresh() {
   setWaiting("handoffPanel", !anyCleared);
   setWaiting("reportPanel", !s.day);
   setWaiting("presetPanel", !s.day);
+  setWaiting("namingPanel", !s.day);
   $("firstRun").hidden = (s.days || []).length > 0;
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&

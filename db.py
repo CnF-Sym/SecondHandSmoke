@@ -386,6 +386,12 @@ def init():
     _add_column("proxies", "output_hash", "TEXT")
     _add_column("media_metadata", "timecode_rate", "TEXT")
     _add_column("media_metadata", "timecode_drop_frame", "INTEGER")
+    # Naming patterns live on the day, because a day is what gets offloaded.
+    # NULL means "the default", which is {original}: no renaming at all.
+    _add_column("days", "pattern_camera", "TEXT")
+    _add_column("days", "pattern_sound", "TEXT")
+    _add_column("presets", "pattern_camera", "TEXT")
+    _add_column("presets", "pattern_sound", "TEXT")
 
 
 def _add_column(table, column, declaration):

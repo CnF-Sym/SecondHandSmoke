@@ -21,6 +21,7 @@ Resolve's clone tool and anything else that speaks ASC MHL. If this
 application disappears tomorrow, the MHL still proves the day is intact.
 """
 
+import csv
 import getpass
 import html
 import os
@@ -253,9 +254,20 @@ def write_mhl(card_id, destination_id):
         f'    <finishdate>{stamp}</finishdate>',
         '  </creatorinfo>',
     ]
+    renamed = []
     for r in rows:
         rel = os.path.relpath(r["dest_path"], root)
         mod = datetime.fromtimestamp(r["mtime"], timezone.utc).isoformat()
+        source_name = os.path.basename(r["rel_path"])
+        if source_name != os.path.basename(rel):
+            renamed.append((r["rel_path"], rel, r["size"], r["src_hash"]))
+            # A comment, not an element. The ASC MHL 1.1 schema defines <hash>
+            # as an xs:sequence with no xs:any, so an extra child would make
+            # this manifest schema-invalid — and a manifest Silverstack or
+            # ShotPut refuses to read is worse than no manifest. A comment is
+            # legal anywhere, ignored by every parser, and still tells a human
+            # reading the file what this thing used to be called.
+            lines.append(f'  <!-- source: {esc(source_name)} -->')
         lines += [
             '  <hash>',
             f'    <file>{esc(rel)}</file>',
@@ -273,6 +285,28 @@ def write_mhl(card_id, destination_id):
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(partial, out_path)
+
+    # The machine-readable half of "the manifest records both names". It sits
+    # beside the MHL and travels with the day, rather than living only in this
+    # program's catalog.
+    names_path = os.path.splitext(out_path)[0] + "_NAMES.csv"
+    if renamed:
+        partial_names = names_path + ".partial"
+        with open(partial_names, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["original", "renamed", "size", "xxhash64be"])
+            for source_rel, dest_rel, size, digest in renamed:
+                writer.writerow([source_rel, dest_rel, size, digest])
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(partial_names, names_path)
+    elif os.path.isfile(names_path):
+        # Nothing was renamed this time. A stale mapping from an earlier run
+        # would be a lie sitting next to a manifest.
+        try:
+            os.remove(names_path)
+        except OSError:
+            pass
     return out_path
 
 
@@ -466,11 +500,22 @@ def day_data(day_id):
         grand_bytes += card["total_bytes"]
 
         copy_state = {}
+        copy_path = {}
         for f in files:
             for d in dests:
-                state = db.q1("SELECT state FROM copies WHERE file_id=? AND destination_id=?",
-                              (f["id"], d["id"]))
-                copy_state[(f["id"], d["id"])] = state["state"] if state else "—"
+                row = db.q1("SELECT state, dest_path FROM copies "
+                            "WHERE file_id=? AND destination_id=?", (f["id"], d["id"]))
+                copy_state[(f["id"], d["id"])] = row["state"] if row else "—"
+                copy_path[(f["id"], d["id"])] = row["dest_path"] if row else None
+            # What this file was actually written as, on the first destination
+            # that has it. Renaming happens on the destination, so the source
+            # name in files.rel_path and this are both true at once and the
+            # paperwork has to show both.
+            f["dest_name"] = next(
+                (os.path.basename(copy_path[(f["id"], d["id"])])
+                 for d in dests if copy_path.get((f["id"], d["id"]))), "")
+            f["renamed"] = bool(f["dest_name"]
+                                and f["dest_name"] != os.path.basename(f["rel_path"]))
 
         cards.append({
             "card": card,
@@ -478,6 +523,7 @@ def day_data(day_id):
             "gate": card_status(card["id"]),
             "files": files,
             "copy_state": copy_state,
+            "renamed_count": sum(1 for f in files if f["renamed"]),
             "media": _media_rows(card["id"]),
             "sync": _dicts(db.q(_SYNC_SQL, (card["id"],))),
             "waveform": _dicts(db.q(_WAVEFORM_SQL, (card["id"],))),
@@ -706,7 +752,15 @@ def render_html(data):
             p.append("</table>")
 
         p.append("<h2>File verification</h2>")
-        p.append("<table><tr><th>File</th><th class=num>Size</th><th>xxHash64</th>"
+        renamed_here = entry.get("renamed_count", 0)
+        if renamed_here:
+            p.append(f"<div class=sub>{renamed_here} of {len(files)} files were "
+                     f"renamed on the destination. The card was not touched. Both "
+                     f"names are below, in the manifest, and in the "
+                     f"<code>_NAMES.csv</code> beside it.</div>")
+        p.append("<table><tr><th>File on the card</th>"
+                 + ("<th>Written as</th>" if renamed_here else "")
+                 + "<th class=num>Size</th><th>xxHash64</th>"
                  + "".join(f"<th>{e(d['label'])}</th>" for d in dests) + "</tr>")
         for f in files:
             cells = ""
@@ -714,7 +768,11 @@ def render_html(data):
                 s = entry["copy_state"][(f["id"], d["id"])]
                 cls = "ok" if s == "verified" else ("bad" if s in ("failed", "—") else "")
                 cells += f"<td class='{cls}'>{e(s)}</td>"
-            p.append(f"<tr><td>{e(f['rel_path'])}</td>"
+            written = ""
+            if renamed_here:
+                written = (f"<td>{e(f['dest_name'])}</td>" if f["renamed"]
+                           else "<td class=sub>unchanged</td>")
+            p.append(f"<tr><td>{e(f['rel_path'])}</td>{written}"
                      f"<td class=num>{human_bytes(f['size'])}</td>"
                      f"<td class=hash>{e(f['src_hash'])}</td>{cells}</tr>")
         p.append("</table>")

@@ -43,6 +43,7 @@ import shutil
 
 import db
 import destinations
+import naming
 import pdfreport
 import storage
 
@@ -168,6 +169,9 @@ def save_from_day(day_id, name, folder_id=UNGROUPED, production=None, logo=None)
         preset_id = db.q1("SELECT id FROM presets WHERE folder_id=? AND name=?",
                           (folder_id, name))["id"]
 
+    db.ex("UPDATE presets SET pattern_camera=?, pattern_sound=? WHERE id=?",
+          (day["pattern_camera"] or "", day["pattern_sound"] or "", preset_id))
+
     # Branding travels with the preset, including its own copy of the logo.
     stored_logo = _copy_logo(logo or pdfreport.branding()["logo"],
                              preset_logo_path(preset_id))
@@ -245,6 +249,23 @@ def apply(preset_id, day_id):
     # project name deliberately does not: renaming the project of a day that
     # already has folders on three drives is not something a preset gets to do
     # quietly. It is reported instead, for a day that has not been made yet.
+    # Naming patterns are part of the setup, and are applied to the day the
+    # same way the drives are. A pattern that would not validate is dropped
+    # rather than written: a preset is not a way to smuggle a bad pattern past
+    # the check the interface makes.
+    for column, key in (("pattern_camera", "pattern_camera"),
+                        ("pattern_sound", "pattern_sound")):
+        value = (preset[column] or "").strip()
+        if not value:
+            continue
+        if naming.validate(value):
+            result["warnings"].append(
+                f"The {key.replace('pattern_', '')} naming pattern in this preset "
+                f"is not valid and was not applied.")
+            continue
+        db.ex(f"UPDATE days SET {column}=? WHERE id=?", (value, day_id))
+        result[key] = value
+
     result["project"] = preset["project"] or ""
     if preset["production_name"] is not None:
         db.setting(pdfreport.SETTING_PRODUCTION, preset["production_name"])
