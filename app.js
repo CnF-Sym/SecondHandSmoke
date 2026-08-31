@@ -709,61 +709,118 @@ function computeSteps(s) {
   // unidentified destination falls back to counting as its own device so a
   // fresh catalog is never shown as worse than it is.
   const deviceKeys = new Set(dests.map((d, i) => d.device_id || `unidentified:${i}`));
-  const destsReady = deviceKeys.size >= s.min_copies;
+  const drives = deviceKeys.size;
+  const need = s.min_copies;
+  const destsReady = drives >= need;
   const anyCards = cards.length > 0;
-  const allSafe = anyCards && cards.every(c => c.gate.safe);
+  const clearedCards = cards.filter(c => c.gate.safe).length;
+  const allSafe = anyCards && clearedCards === cards.length;
   const camCards = cards.filter(c => ["camera", "mixed"].includes(c.kind));
   const syncTotal = s.sync?.total || 0;
-  const syncDone = syncTotal > 0 && s.sync.analyzed === syncTotal &&
-    !(s.sync.ambiguous || s.sync.unmatched || s.sync.invalid || s.sync.review);
+  const syncAnalyzed = s.sync?.analyzed || 0;
+  const syncAttention = (s.sync?.ambiguous || 0) + (s.sync?.unmatched || 0)
+    + (s.sync?.invalid || 0) + (s.sync?.review || 0);
+  const syncDone = syncTotal > 0 && syncAnalyzed === syncTotal && !syncAttention;
   const proxyTotal = camCards.reduce((n, c) => n + (c.proxies?.total || 0), 0);
   const proxyReady = camCards.reduce((n, c) => n + (c.proxies?.ready || 0), 0);
   const proxiesDone = proxyTotal > 0 && proxyReady === proxyTotal;
   const handoffDone = Boolean(s.handoff?.package_ready) && !s.handoff?.unresolved;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   const steps = [
-    { key: "day", label: "Day", anchor: null, done: Boolean(day) },
-    { key: "dest", label: "Destinations", anchor: "destSlots", done: destsReady, blocked: day && !destsReady },
-    { key: "cards", label: "Ingest cards", anchor: "scanList", done: allSafe },
-    { key: "sync", label: "Sync", anchor: "syncPanel", done: syncDone },
-    { key: "proxy", label: "Proxies", anchor: "proxyPanel", done: proxiesDone },
-    { key: "handoff", label: "Handoff", anchor: "handoffPanel", done: handoffDone },
+    {
+      key: "day", label: "Day", anchor: null, done: Boolean(day),
+      hint: "Name the project and the day. Everything else hangs off it.",
+    },
+    {
+      key: "dest", label: "Destinations", anchor: "destSlots", done: destsReady,
+      blocked: Boolean(day) && !destsReady,
+      count: `${drives}/${need}`,
+      hint: destsReady
+        ? `${plural(drives, "drive")} ready.`
+        : `Add ${plural(need - drives, "more drive")}. A card cannot clear until every `
+          + `file is verified on ${need} physically separate drives.`,
+    },
+    {
+      key: "cards", label: "Ingest cards", anchor: "scanList", done: allSafe,
+      count: anyCards ? `${clearedCards}/${cards.length}` : "",
+      hint: !anyCards
+        ? "Put a card in the reader and scan for it."
+        : allSafe
+          ? "Every card on this day has cleared. They are safe to format."
+          : `${plural(cards.length - clearedCards, "card")} still to clear. `
+            + "Nothing is safe to format until it does.",
+    },
+    {
+      key: "sync", label: "Sync", anchor: "syncPanel", done: syncDone,
+      count: syncTotal ? `${syncAnalyzed}/${syncTotal}` : "",
+      hint: !syncTotal
+        ? "Nothing to sync yet — sync runs on camera clips once a card has cleared."
+        : syncAttention
+          ? `${plural(syncAttention, "clip")} need a look before the handoff.`
+          : "Match camera clips to sound by timecode. Originals are untouched.",
+    },
+    {
+      key: "proxy", label: "Proxies", anchor: "proxyPanel", done: proxiesDone,
+      count: proxyTotal ? `${proxyReady}/${proxyTotal}` : "",
+      hint: proxyTotal
+        ? "Build relink-safe ProRes proxies from the verified copies."
+        : "Proxies build from camera clips once a card has cleared.",
+    },
+    {
+      key: "handoff", label: "Handoff", anchor: "handoffPanel", done: handoffDone,
+      count: s.handoff?.total ? `${s.handoff.ready}/${s.handoff.total}` : "",
+      hint: s.handoff?.unresolved
+        ? `${plural(s.handoff.unresolved, "sync exception")} to resolve before editorial.`
+        : "Build the Resolve timeline, the ALE and the review dailies.",
+    },
   ];
   const nowIndex = steps.findIndex(st => !st.done);
   return steps.map((st, i) => ({ ...st, now: i === nowIndex }));
 }
 
-// ffmpeg is optional and external, and its absence is easy to misread as the
-// tool being broken. Say plainly which half still works, because the half that
-// still works is the half that decides whether a card can be formatted.
-function renderTools(tools) {
-  const box = $("toolStatus");
-  if (!box) return;
-  const t = tools || {};
-  if (t.ffmpeg && t.ffprobe) {
-    box.className = "foot-line foot-tools";
-    box.innerHTML = `ffmpeg found at <b>${esc(t.ffmpeg)}</b> · metadata, proxies,
-      timecode sync, waveform fallback and dailies are available`;
-    return;
-  }
-  const missing = [!t.ffmpeg && "ffmpeg", !t.ffprobe && "ffprobe"]
-    .filter(Boolean).join(" and ");
-  box.className = "foot-line foot-tools missing";
-  box.innerHTML = `<b>${esc(missing)} not found.</b>&nbsp; Offload, verification,
-    checksums, MHL manifests and the format gate are unaffected — a card that
-    clears is still safe to format. Metadata, proxies, timecode sync, waveform
-    fallback and dailies are unavailable until it is installed
-    (<code>brew install ffmpeg</code>); it is picked up without restarting.`;
-}
-
+// The rail under the header. One run of steps joined by a line, the current one
+// filled so it reads from across a cart, and a plain sentence saying what to do
+// next — because "which of these six things is my problem right now" is the
+// question at 4am, and a row of lamps does not answer it.
 function renderSteps(s) {
   const steps = computeSteps(s);
-  $("stepTracker").innerHTML = steps.map(st => `
-    <span class="step ${st.done ? "done" : ""} ${st.now ? "now" : ""} ${st.blocked ? "blocked" : ""}"
-      ${st.anchor ? `onclick="document.getElementById('${st.anchor}')?.scrollIntoView({behavior:'smooth',block:'center'})"` : ""}>
-      <span class="led"></span>${esc(st.label)}
-    </span>`).join("");
+  const parts = [];
+  steps.forEach((st, i) => {
+    if (i > 0) {
+      parts.push(`<li class="track-link ${steps[i - 1].done ? "done" : ""}"
+        aria-hidden="true"></li>`);
+    }
+    const classes = ["step", st.done ? "done" : "", st.now ? "now" : "",
+                     st.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+    const jump = st.anchor
+      ? `onclick="document.getElementById('${st.anchor}')?.scrollIntoView({behavior:'smooth',block:'center'})"`
+      : "";
+    const state = st.blocked ? "blocked" : st.done ? "done" : st.now ? "current" : "not started";
+    parts.push(`
+      <li>
+        <button type="button" class="${classes}" ${jump}
+          ${st.now ? 'aria-current="step"' : ""}
+          aria-label="${esc(st.label)}${st.count ? `, ${esc(st.count)}` : ""}, ${state}">
+          <span class="led" aria-hidden="true"></span>${esc(st.label)}
+          ${st.count ? `<span class="step-count">${esc(st.count)}</span>` : ""}
+        </button>
+      </li>`);
+  });
+  $("stepTracker").innerHTML = parts.join("");
+
+  const current = steps.find(st => st.now);
+  const hint = $("trackHint");
+  if (!current) {
+    hint.className = "track-hint";
+    hint.innerHTML = "<b>The day is complete.</b> Every card cleared, synced, "
+      + "proxied and handed off.";
+  } else {
+    hint.className = `track-hint ${current.blocked ? "blocked" : ""}`;
+    hint.innerHTML = `<b>Next — ${esc(current.label)}.</b> ${esc(current.hint)}`;
+  }
 }
+
 
 async function refresh() {
   let s;

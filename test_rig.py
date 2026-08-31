@@ -1399,10 +1399,13 @@ else:
     check("MHL username is the login account, not the hostname", False,
           "manifest was not written")
 
-# -- F-22: the step tracker counts drives, not destination rows.
+# -- F-22: the step tracker counts drives, not destination rows. Two folders on
+# one disk are one place for a copy to die. Matched on the pieces rather than
+# one expression, so the check survives the tracker being rewritten.
 tracker_source = open("app.js", encoding="utf-8").read()
 check("the step tracker counts distinct devices",
-      "deviceKeys.size >= s.min_copies" in tracker_source)
+      "d.device_id" in tracker_source and "deviceKeys.size" in tracker_source
+      and "s.min_copies" in tracker_source)
 
 print("\n[20] version and tool discovery")
 
@@ -1780,6 +1783,37 @@ check("the interface offers a picker as well as a typed path",
 check("a chosen image travels as JSON, so the cross-origin guard is untouched",
       "logo_data" in open("app.py", encoding="utf-8").read() and
       "multipart" not in open("app.py", encoding="utf-8").read())
+
+print("\n[26] the track")
+
+ui_html = open("index.html", encoding="utf-8").read()
+ui_js = open("app.js", encoding="utf-8").read()
+
+# It used to be six chips in the top-right corner of the header, which is the
+# least-looked-at part of a window. If it goes back in there, nobody finds it.
+check("the track is its own region, not tucked into the header",
+      '<nav class="track"' in ui_html and
+      ui_html.index('</header>') < ui_html.index('id="stepTracker"'))
+check("the track is announced to assistive technology",
+      'aria-label="Progress through this shoot day"' in ui_html)
+check("the current step is marked as current",
+      'aria-current="step"' in ui_js)
+# Colour alone is not a status. Someone reading this with a screen reader, or
+# on a cart monitor with the contrast turned down, still needs the words.
+check("each step says its state out loud, not only in colour",
+      'aria-label="${esc(st.label)}' in ui_js and ", ${state}" in ui_js
+      and 'st.blocked ? "blocked"' in ui_js)
+
+# A rail of lamps does not answer "which of these six is my problem right now".
+check("the track carries a plain sentence about what to do next",
+      'id="trackHint"' in ui_html and "Next — " in ui_js)
+check("every step can explain itself", ui_js.count("hint:") >= 6)
+check("steps carry counts, so the track is progress and not just lamps",
+      "step-count" in ui_js and "step-count" in open("app.css", encoding="utf-8").read())
+
+# The destinations step is the one that blocks, and it must say by how much.
+check("a short destination count says how many more drives are needed",
+      "Add ${plural(need - drives" in ui_js)
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

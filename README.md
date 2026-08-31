@@ -170,9 +170,10 @@ To rehearse without hardware, point `DIT_SCAN_ROOT` at a folder of fake cards.
 
 ## On-set procedure
 
-The header carries a live step tracker (Day → Destinations → Ingest cards →
-Sync → Proxies → Handoff) with a red/green LED on each step, so at a glance
-you can see what's done and what's next; clicking a step scrolls to it.
+A rail under the header shows where the day is: Day → Destinations →
+Ingest cards → Sync → Proxies → Handoff. Each step carries a count, the
+current one is filled, and a line underneath says in plain words what to
+do next and why. Click any step to jump to its panel.
 
 1. **Start day** — name it `DAY_01` and set the date.
 2. **Fill the three destination slots** — Drive A (primary), Drive B (backup),
