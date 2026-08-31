@@ -783,6 +783,15 @@ function computeSteps(s) {
 // filled so it reads from across a cart, and a plain sentence saying what to do
 // next — because "which of these six things is my problem right now" is the
 // question at 4am, and a row of lamps does not answer it.
+// A phase that cannot run yet is dimmed, not hidden. Hiding controls mid-shoot
+// makes people think the tool broke; leaving them looking live makes them think
+// the tool is ignoring them. Dimmed, with the panel's own status line saying
+// what unlocks it, is the honest middle.
+function setWaiting(id, waiting) {
+  const panel = $(id);
+  if (panel) panel.classList.toggle("waiting", Boolean(waiting));
+}
+
 function renderSteps(s) {
   const steps = computeSteps(s);
   const parts = [];
@@ -851,6 +860,15 @@ async function refresh() {
   renderSteps(s);
   renderTools(s.tools);
   renderReports(s);
+
+  // Sync, proxies and dailies all read from verified copies, so none of them
+  // can do anything until at least one card has cleared the gate.
+  const anyCleared = (s.cards || []).some(c => c.gate && c.gate.safe);
+  setWaiting("syncPanel", !anyCleared);
+  setWaiting("proxyPanel", !anyCleared);
+  setWaiting("handoffPanel", !anyCleared);
+  setWaiting("reportPanel", !s.day);
+  $("firstRun").hidden = (s.days || []).length > 0;
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&
       ["done", "failed", "cancelled"].includes(s.job.state) && s.job.finished_epoch &&

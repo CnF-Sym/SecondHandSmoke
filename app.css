@@ -37,7 +37,7 @@ header{
 }
 .brand{display:flex; align-items:center; gap:12px; font-weight:800;
   letter-spacing:.1em; text-transform:uppercase; font-size:13px}
-.brand-logo{height:48px;width:auto;display:block;flex:none}
+.brand-logo{height:34px;width:auto;display:block;flex:none}
 .brand-lockup{display:flex;flex-direction:column;line-height:1}
 .brand-sub{color:var(--pink);font-size:8px;letter-spacing:.24em;font-weight:700}
 .brand-pub{color:var(--dim);font-size:8px;letter-spacing:.2em;margin-top:4px;opacity:.72}
@@ -121,9 +121,26 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
 .panel h2 .num{width:17px; height:17px; border-radius:50%; background:var(--panel-2);
   border:1px solid var(--line-hot); color:var(--dim); font-size:9px; font-weight:800;
   display:inline-flex; align-items:center; justify-content:center; flex:none}
+/* Two columns means the numbered panels read 1,2,3 down the left and 4,5,6
+   down the right, while the eye wants to go left-to-right. These captions say
+   out loud what each column is for, which is cheaper than fighting the layout. */
+.col-cap{margin:0; font-size:9px; letter-spacing:.24em; text-transform:uppercase;
+  color:var(--dim); opacity:.7}
+
+/* A phase you cannot use yet should not look as live as one you can. The
+   accent stripe down the side of a panel is now status rather than decoration:
+   it lights up when that phase is actually reachable. Nothing is hidden — a
+   tool that makes features disappear mid-shoot is worse than one that greys
+   them — but the screen stops shouting six equal invitations at you. */
+.panel.waiting{--panel-accent: var(--line)}
+.panel.waiting h2{color:#6E6B65}
+.panel.waiting .note{opacity:.75}
+
 .note{color:var(--dim); font-size:12px; margin:0 0 12px}
 .note code{color:var(--text)}
 .note.warn{color:var(--work)}
+.note.first-run{color:var(--cyan); border-left:2px solid var(--cyan);
+  padding-left:10px; opacity:.9}
 
 /* Report logo: pick, drop, or type. The preview is there so nobody discovers
    they branded a day's paperwork with the wrong image after sending it. */

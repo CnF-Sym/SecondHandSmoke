@@ -1788,6 +1788,7 @@ print("\n[26] the track")
 
 ui_html = open("index.html", encoding="utf-8").read()
 ui_js = open("app.js", encoding="utf-8").read()
+ui_css = open("app.css", encoding="utf-8").read()
 
 # It used to be six chips in the top-right corner of the header, which is the
 # least-looked-at part of a window. If it goes back in there, nobody finds it.
@@ -1809,11 +1810,34 @@ check("the track carries a plain sentence about what to do next",
       'id="trackHint"' in ui_html and "Next — " in ui_js)
 check("every step can explain itself", ui_js.count("hint:") >= 6)
 check("steps carry counts, so the track is progress and not just lamps",
-      "step-count" in ui_js and "step-count" in open("app.css", encoding="utf-8").read())
+      "step-count" in ui_js and "step-count" in ui_css)
 
 # The destinations step is the one that blocks, and it must say by how much.
 check("a short destination count says how many more drives are needed",
       "Add ${plural(need - drives" in ui_js)
+
+print("\n[27] reading order and what is reachable")
+
+# The numbered panels read 1,2,3 down the left column and 4,5,6 down the right,
+# while the eye goes left to right. Saying what each column is for is cheaper
+# than fighting the layout.
+check("each column says what it is for", ui_html.count('class="col-cap"') == 2)
+
+# Dimmed, never hidden: a tool whose controls vanish mid-shoot reads as broken.
+check("phases that cannot run yet are dimmed rather than removed",
+      "setWaiting(" in ui_js and
+      all(f'id="{name}"' in ui_html and f'id="{name}" hidden' not in ui_html
+          for name in ("syncPanel", "proxyPanel", "handoffPanel")))
+check("the accent stripe is status, not decoration",
+      ".panel.waiting{--panel-accent" in ui_css)
+check("sync, proxies and handoff wait on a cleared card",
+      "anyCleared" in ui_js and ui_js.count("setWaiting(") >= 5)
+check("a first run explains what a shoot day even is",
+      'id="firstRun"' in ui_html and "firstRun" in ui_js)
+
+# The wordmark was pulling the eye away from the thing that orients you.
+check("the logo does not out-shout the track",
+      ".brand-logo{height:34px" in ui_css)
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
