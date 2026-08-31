@@ -229,8 +229,9 @@ clearance, media metadata, sync, waveform results and a file-by-file
 verification table showing the state of every file on every drive.
 
 The same day can also be produced as a **branded PDF**, which is what producers
-and post houses actually want in an email. Set a production name and a logo in
-the **Reports** panel, then choose a layout:
+and post houses actually want in an email. Put a production name in the
+**Reports** panel and give it a logo — choose one with a file picker, drag one
+onto the panel, or type a path, whichever is quickest. Then choose a layout:
 
 - **Verification PDF** — the dense manifest. Every file, its size, its xxHash64,
   and its verified/failed state on each destination drive.
@@ -245,6 +246,15 @@ could disagree about whether a card is safe to format is the one bug this
 program exists to prevent, so they are not two code paths.
 
 The HTML report is unchanged and is not going anywhere. The PDF is an addition.
+
+**What happens to a logo you choose.** It is copied into this program's own
+folder, not referenced where it sits. Two reasons, and neither is convenience: a
+path into a show folder stops resolving the moment that drive is unmounted,
+which is halfway through every shoot day; and the bytes are never stored as they
+arrived. They are decoded, checked to really be an image, and re-encoded as PNG,
+so what ends up in your reports is a file this program wrote. The image you
+picked is read and nothing else — never moved, renamed or altered. Removing a
+logo removes this program's copy and nothing of yours.
 
 PDFs need `reportlab`, which is optional in the same way NumPy and Pillow are:
 without it the PDF buttons explain that they are unavailable and everything

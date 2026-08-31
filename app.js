@@ -210,6 +210,100 @@ function openPdf(layout) {
   window.open(`/api/day/${activeDayId}/report.pdf?layout=${layout}`, "_blank");
 }
 
+// The logo can be picked, dropped, or typed. All three end at the same place:
+// the server decodes it, checks it really is an image, re-encodes it as PNG and
+// keeps its own copy — so a logo cannot vanish mid-shoot when the drive it came
+// from is unmounted.
+const MAX_LOGO_BYTES = 12 * 1024 * 1024;
+let logoPreviewKey = null;
+
+function pickLogo() { $("logoFile").click(); }
+
+function logoChosen(input) {
+  const file = input.files && input.files[0];
+  input.value = "";
+  if (file) sendLogo(file);
+}
+
+async function sendLogo(file) {
+  if (!file.type.startsWith("image/")) {
+    return toast(`${file.name} is not an image.`, true);
+  }
+  if (file.size > MAX_LOGO_BYTES) {
+    return toast("That image is larger than 12 MB. A report logo does not need to be.", true);
+  }
+  toast(`Reading ${file.name}…`);
+  let dataUrl;
+  try {
+    dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("The file could not be read."));
+      reader.readAsDataURL(file);
+    });
+  } catch (err) {
+    return toast(String(err.message || err), true);
+  }
+  try {
+    const result = await api("/api/report-branding", {
+      method: "POST",
+      body: JSON.stringify({
+        production: $("reportProduction").value.trim(),
+        logo_data: dataUrl,
+      }),
+    });
+    $("reportLogo").value = result.logo || "";
+    logoPreviewKey = null;
+    toast("Logo saved.");
+  } catch (err) {
+    // api() has already shown the reason.
+  }
+  refresh();
+}
+
+async function removeLogo() {
+  try {
+    await api("/api/report-branding", {
+      method: "POST",
+      body: JSON.stringify({
+        production: $("reportProduction").value.trim(), clear_logo: true }),
+    });
+    $("reportLogo").value = "";
+    logoPreviewKey = null;
+    toast("Logo removed. Nothing of yours was deleted — only this program's copy.");
+  } catch (err) {
+    // api() has already shown the reason.
+  }
+  refresh();
+}
+
+function wireLogoDrop() {
+  const zone = $("logoDrop");
+  if (!zone) return;
+  const stop = event => { event.preventDefault(); event.stopPropagation(); };
+  ["dragenter", "dragover"].forEach(name => zone.addEventListener(name, event => {
+    stop(event);
+    zone.classList.add("over");
+  }));
+  ["dragleave", "dragend"].forEach(name => zone.addEventListener(name, event => {
+    stop(event);
+    zone.classList.remove("over");
+  }));
+  zone.addEventListener("drop", event => {
+    stop(event);
+    zone.classList.remove("over");
+    const file = event.dataTransfer && event.dataTransfer.files
+      && event.dataTransfer.files[0];
+    if (file) sendLogo(file);
+  });
+  // A file dropped anywhere else would otherwise navigate the whole interface
+  // away to that file, which mid-offload is alarming even though it is safe.
+  ["dragover", "drop"].forEach(name =>
+    window.addEventListener(name, event => {
+      if (!zone.contains(event.target)) event.preventDefault();
+    }));
+}
+
 async function saveBranding() {
   const production = $("reportProduction").value.trim();
   const logo = $("reportLogo").value.trim();
@@ -233,6 +327,25 @@ function renderReports(state) {
   const focused = document.activeElement;
   if (focused !== $("reportProduction")) $("reportProduction").value = brand.production || "";
   if (focused !== $("reportLogo")) $("reportLogo").value = brand.logo || "";
+
+  const preview = $("logoPreview");
+  const dropText = $("logoDropText");
+  const removeButton = $("logoRemove");
+  if (brand.logo) {
+    if (logoPreviewKey !== brand.logo) {
+      logoPreviewKey = brand.logo;
+      preview.src = `/api/report-branding/logo?v=${Date.now()}`;
+    }
+    preview.hidden = false;
+    removeButton.hidden = false;
+    dropText.textContent = "Drop another image to replace it";
+  } else {
+    logoPreviewKey = null;
+    preview.hidden = true;
+    preview.removeAttribute("src");
+    removeButton.hidden = true;
+    dropText.textContent = "Drop a logo image here, or choose one above";
+  }
 
   const ready = Boolean(pdf.available && activeDayId);
   $("pdfTableButton").disabled = !ready;
@@ -718,4 +831,5 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) { clearTimeout(pollTimer); pollOnce(); }
 });
 
+wireLogoDrop();
 refresh().then(busy => schedulePoll(busy ? POLL_ACTIVE : POLL_IDLE));

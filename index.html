@@ -44,7 +44,15 @@
         <input id="reportProduction" placeholder="Production name — printed on the PDF">
       </div>
       <div class="field-row">
-        <input id="reportLogo" placeholder="Logo image, e.g. /Users/you/Show/logo.png">
+        <input id="reportLogo" placeholder="Logo image — choose, drop, or type a path">
+        <button class="btn ghost sm" onclick="pickLogo()" style="max-width:110px">Choose…</button>
+      </div>
+      <input type="file" id="logoFile" accept="image/png,image/jpeg,image/tiff,image/heic,image/webp"
+             hidden onchange="logoChosen(this)">
+      <div class="logo-drop" id="logoDrop">
+        <img class="logo-preview" id="logoPreview" alt="Current report logo" hidden>
+        <span id="logoDropText">Drop a logo image here, or choose one above</span>
+        <button class="btn ghost sm" id="logoRemove" onclick="removeLogo()" hidden>Remove</button>
       </div>
       <button class="btn ghost" onclick="saveBranding()">Save branding</button>
       <button class="btn ghost" id="pdfTableButton" onclick="openPdf('table')"

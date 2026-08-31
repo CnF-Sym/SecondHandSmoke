@@ -382,3 +382,83 @@ def build(day_id, layout=DEFAULT_LAYOUT, out_path=None):
 
     doc.build(story)
     return out_path
+
+
+# --- The logo the operator chooses ----------------------------------------
+#
+# A picked image is copied into the application's own folder rather than
+# referenced where it sits. Two reasons, and neither is about convenience:
+#
+#   * A path into a show folder on an external drive stops resolving the moment
+#     that drive is unmounted, which is halfway through every shoot day. A copy
+#     does not.
+#   * The bytes are never stored as they arrived. They are decoded, checked to
+#     be a real image, flattened onto white, resized if enormous, and re-encoded
+#     as PNG. Whatever else was in the original file does not survive that, and
+#     what reportlab is later handed is a file this program wrote.
+
+MAX_LOGO_BYTES = 12 * 1024 * 1024
+MAX_LOGO_EDGE = 2400
+
+
+def logo_store_path():
+    folder = os.path.join(os.path.dirname(db.DB_PATH), "branding")
+    return os.path.join(folder, "logo.png")
+
+
+def store_logo(raw):
+    """Sanitise and store a chosen logo. Returns its path.
+
+    `raw` is the decoded bytes of the file the operator picked. Raises
+    ValueError with something worth reading for anything that is not a usable
+    image.
+    """
+    if not raw:
+        raise ValueError("The chosen file was empty.")
+    if len(raw) > MAX_LOGO_BYTES:
+        raise ValueError(f"That image is {len(raw) // (1024 * 1024)} MB. "
+                         f"The limit is {MAX_LOGO_BYTES // (1024 * 1024)} MB — "
+                         f"a report logo does not need to be larger.")
+    try:
+        from PIL import Image
+    except Exception:
+        raise ValueError("Pillow is not installed, so a picked image cannot be "
+                         "checked and converted. Type a path to a PNG instead, "
+                         "or install Pillow.")
+
+    import io
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            probe.verify()          # rejects anything that is not really an image
+        with Image.open(io.BytesIO(raw)) as image:
+            image.load()
+            if max(image.size) > MAX_LOGO_EDGE:
+                scale = MAX_LOGO_EDGE / max(image.size)
+                image = image.resize((max(1, round(image.size[0] * scale)),
+                                      max(1, round(image.size[1] * scale))))
+            converted = image.convert("RGBA")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError(f"That file could not be read as an image "
+                         f"({exc.__class__.__name__}). PNG, JPEG, TIFF and HEIC "
+                         f"all work.")
+
+    path = logo_store_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    partial = path + ".partial"
+    converted.save(partial, format="PNG", optimize=True)
+    os.replace(partial, path)
+    db.setting(SETTING_LOGO, path)
+    return path
+
+
+def clear_logo():
+    """Forget the logo. The stored copy goes; nothing of the operator's does."""
+    db.setting(SETTING_LOGO, "")
+    stored = logo_store_path()
+    if os.path.isfile(stored):
+        try:
+            os.remove(stored)
+        except OSError:
+            pass

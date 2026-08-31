@@ -430,8 +430,10 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
                  initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping ([URL]?) -> Void) {
         let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = parameters.allowsDirectories == false
+        // allowsDirectories is true only for a directory-picking input. A normal
+        // file input must offer files, not folders.
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = parameters.allowsDirectories
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.begin { result in completionHandler(result == .OK ? panel.urls : nil) }
     }

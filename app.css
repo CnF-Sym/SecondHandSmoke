@@ -92,6 +92,15 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
 .note{color:var(--dim); font-size:12px; margin:0 0 12px}
 .note code{color:var(--text)}
 .note.warn{color:var(--work)}
+
+/* Report logo: pick, drop, or type. The preview is there so nobody discovers
+   they branded a day's paperwork with the wrong image after sending it. */
+.logo-drop{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  border:1px dashed var(--line-hot);border-radius:6px;padding:12px;margin:0 0 12px;
+  color:var(--dim);font-size:11px;transition:border-color .12s,background .12s}
+.logo-drop.over{border-color:var(--cyan);background:rgba(24,214,197,.06);color:var(--text)}
+.logo-preview{max-height:56px;max-width:200px;width:auto;height:auto;display:block;
+  background:#fff;border-radius:4px;padding:4px}
 .empty{color:var(--dim); font-size:12px; margin:4px 0 12px}
 
 /* controls -------------------------------------------------------------- */

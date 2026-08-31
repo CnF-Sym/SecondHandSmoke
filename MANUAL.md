@@ -246,6 +246,18 @@ they belong to the production rather than the machine:
 | `report_production_name` | Reports panel | Printed at the top of the PDF report |
 | `report_logo_path` | Reports panel | Image placed on the PDF's first page |
 
+A logo can be picked with a file dialog, dropped onto the Reports panel, or
+typed as a path. All three arrive at `pdfreport.store_logo()`, which decodes the
+bytes, verifies they are really an image, resizes anything over 2400 px, and
+re-encodes as PNG into `~/SecondHandSmoke/branding/logo.png`. The setting then
+points at that copy.
+
+A picked file travels base64-encoded inside the JSON request body rather than as
+a multipart upload. That is deliberate: every state-changing request to this API
+must be `application/json`, because a cross-origin HTML form can post here but
+cannot send that content type. Accepting multipart would mean removing that
+guard from the whole API to add one convenience.
+
 A logo is decoration. If the file is missing or unreadable the report is still
 produced, with a line saying the logo could not be drawn.
 
@@ -955,6 +967,8 @@ Constants: `AUTO_SCORE 0.62`, `AUTO_MARGIN 0.08`, `REVIEW_SCORE 0.35`,
 | `branding()` | Production name and logo path from settings; never raises |
 | `build(day_id, layout, out_path)` | Writes the PDF and returns its path |
 | `LAYOUTS` | `table` (verification manifest) and `metadata` |
+| `store_logo(raw)` | Decodes, verifies, re-encodes and stores a chosen logo |
+| `clear_logo()` | Forgets the logo and removes this program's copy of it |
 
 This module never touches the catalog. `reports.day_data()` gathers the day
 once and hands it over, so the SAFE TO FORMAT stamp printed in the PDF is

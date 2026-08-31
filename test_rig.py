@@ -1685,5 +1685,101 @@ check("the source artwork is not shipped inside the application",
 check("the build script picks up the app icon",
       "AppIcon.icns" in open("macos/build_macos_app.sh", encoding="utf-8").read())
 
+print("\n[25] the report logo")
+
+import base64
+
+try:
+    from PIL import Image as _PILImage
+    _pillow = True
+except Exception:
+    _pillow = False
+
+if not _pillow:
+    print("  SKIP  Pillow is not installed — logo handling cannot be exercised")
+else:
+    source_logo = os.path.join(RIG, "show_logo.png")
+    _PILImage.new("RGBA", (64, 40), (255, 0, 128, 255)).save(source_logo)
+
+    # A payload appended after the PNG's end. Whatever a file claims to be, the
+    # copy this program keeps is one it wrote itself, so this must not survive.
+    smuggled = b"<<not-part-of-any-image>>"
+    with open(source_logo, "ab") as handle:
+        handle.write(smuggled)
+    original_bytes = open(source_logo, "rb").read()
+
+    payload = base64.b64encode(original_bytes).decode("ascii")
+    status, body = post("/api/report-branding", production="THE SHOW",
+                        logo_data=f"data:image/png;base64,{payload}")
+    check("a picked image is accepted", status == 200, body)
+    stored = body.get("logo", "")
+    check("the logo is kept in the program's own folder, not where it was picked",
+          bool(stored) and stored != source_logo
+          and stored == pdfreport.logo_store_path(), stored)
+    check("the stored logo exists and is a PNG",
+          os.path.isfile(stored) and open(stored, "rb").read(8) == b"\x89PNG\r\n\x1a\n")
+    check("the stored logo is a re-encode, not the bytes that arrived",
+          smuggled not in open(stored, "rb").read())
+    check("the file the operator picked is untouched",
+          open(source_logo, "rb").read() == original_bytes)
+    check("the production name is stored alongside it",
+          db.setting(pdfreport.SETTING_PRODUCTION) == "THE SHOW")
+
+    preview = c.get("/api/report-branding/logo")
+    check("the interface can show the stored logo",
+          preview.status_code == 200 and preview.data[:8] == b"\x89PNG\r\n\x1a\n",
+          preview.status_code)
+
+    if pdf_ok:
+        branded = pdfreport.build(day_id, "table",
+                                  out_path=os.path.join(RIG, "report_branded.pdf"))
+        check("a branded report is produced with the logo on it",
+              os.path.getsize(branded) > 1000)
+
+    # A typed path is copied too, for the same reason: a path into a show folder
+    # stops resolving the moment that drive is unmounted.
+    status, body = post("/api/report-branding", production="THE SHOW",
+                        logo=source_logo)
+    check("a typed path is copied rather than referenced",
+          status == 200 and body.get("logo") != source_logo, body)
+
+    status, body = post("/api/report-branding", production="THE SHOW",
+                        logo=os.path.join(RIG, "does_not_exist.png"))
+    check("a path that is not there is refused with a reason",
+          status == 400 and "No file at" in body.get("error", ""), body)
+
+    not_an_image = base64.b64encode(b"MZ\x90\x00 this is not an image").decode("ascii")
+    status, body = post("/api/report-branding", production="THE SHOW",
+                        logo_data=not_an_image)
+    check("a file that is not an image is refused with a reason",
+          status == 400 and "image" in body.get("error", "").lower(), body)
+
+    oversize = base64.b64encode(b"\x00" * (pdfreport.MAX_LOGO_BYTES + 1)).decode("ascii")
+    status, body = post("/api/report-branding", production="THE SHOW",
+                        logo_data=oversize)
+    check("an oversized image is refused before it is decoded as one",
+          status == 400, status)
+
+    kept = db.setting(pdfreport.SETTING_LOGO)
+    status, body = post("/api/report-branding", production="THE SHOW", clear_logo=True)
+    check("removing the logo clears the setting", status == 200 and not body.get("logo"))
+    check("removing the logo removes only this program's copy",
+          not os.path.isfile(kept) and os.path.isfile(source_logo))
+    check("the preview says there is nothing to show",
+          c.get("/api/report-branding/logo").status_code == 404)
+
+    # And the report still builds with no logo at all.
+    if pdf_ok:
+        plain = pdfreport.build(day_id, "table",
+                                out_path=os.path.join(RIG, "report_plain.pdf"))
+        check("a report with no logo is still produced", os.path.getsize(plain) > 1000)
+
+check("the interface offers a picker as well as a typed path",
+      'type="file"' in open("index.html", encoding="utf-8").read() and
+      "sendLogo" in open("app.js", encoding="utf-8").read())
+check("a chosen image travels as JSON, so the cross-origin guard is untouched",
+      "logo_data" in open("app.py", encoding="utf-8").read() and
+      "multipart" not in open("app.py", encoding="utf-8").read())
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

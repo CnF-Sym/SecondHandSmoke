@@ -21,6 +21,8 @@ Runs on http://127.0.0.1:3838 by default. Bound to loopback only; this
 never needs to be reachable from anywhere else.
 """
 
+import base64
+import binascii
 import html
 import os
 import re
@@ -48,6 +50,10 @@ import waveform
 BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 app = Flask(__name__, template_folder=BASE_DIR, static_folder=None)
+# Nothing this interface sends is large except a chosen report logo, and
+# that is capped well below this. An unbounded body is a way to spend a
+# cart machine's memory for free.
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 
 try:
     PORT = int(os.environ.get("DIT_PORT", "3838"))
@@ -703,16 +709,66 @@ def manifest(card_id):
 
 @app.post("/api/report-branding")
 def report_branding():
+    """Store the production name, and the logo, however it was chosen.
+
+    A picked file arrives base64-encoded inside the JSON body rather than as a
+    multipart upload. That is not laziness: every state-changing request here
+    must be application/json, because a cross-origin HTML form can post to this
+    server but cannot send that content type. Accepting multipart would mean
+    taking that guard off the whole API to add one convenience.
+
+    A typed path and a picked file end in the same place — pdfreport.store_logo
+    decodes, checks and re-encodes both, and stores the result inside this
+    program's own folder.
+    """
     body = request.get_json(silent=True) or {}
     production = str(body.get("production") or "").strip()[:120]
-    logo = str(body.get("logo") or "").strip()
-    if logo:
-        logo = os.path.abspath(os.path.expanduser(logo))
-        if not os.path.isfile(logo):
-            return jsonify(error=f"No file at {logo}"), 400
     db.setting(pdfreport.SETTING_PRODUCTION, production)
-    db.setting(pdfreport.SETTING_LOGO, logo)
-    return jsonify(ok=True, production=production, logo=logo)
+
+    if body.get("clear_logo"):
+        pdfreport.clear_logo()
+        return jsonify(ok=True, production=production, logo="")
+
+    raw = None
+    encoded = str(body.get("logo_data") or "")
+    if encoded:
+        if "," in encoded[:64] and encoded.lstrip().startswith("data:"):
+            encoded = encoded.split(",", 1)[1]
+        try:
+            raw = base64.b64decode(encoded, validate=True)
+        except (binascii.Error, ValueError):
+            return jsonify(error="That image did not arrive intact. Try again."), 400
+    else:
+        typed = str(body.get("logo") or "").strip()
+        if typed:
+            path = os.path.abspath(os.path.expanduser(typed))
+            if not os.path.isfile(path):
+                return jsonify(error=f"No file at {path}"), 400
+            if os.path.getsize(path) > pdfreport.MAX_LOGO_BYTES:
+                return jsonify(error="That image is too large for a report logo."), 400
+            if path == db.setting(pdfreport.SETTING_LOGO):
+                return jsonify(ok=True, production=production, logo=path)
+            with open(path, "rb") as handle:
+                raw = handle.read()
+
+    if raw is None:
+        return jsonify(ok=True, production=production,
+                       logo=db.setting(pdfreport.SETTING_LOGO) or "")
+    try:
+        stored = pdfreport.store_logo(raw)
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(ok=True, production=production, logo=stored)
+
+
+@app.get("/api/report-branding/logo")
+def report_branding_logo():
+    """The stored logo, for the preview in the interface."""
+    stored = db.setting(pdfreport.SETTING_LOGO) or ""
+    if not stored or not os.path.isfile(stored):
+        return Response("No logo is set.\n", status=404, mimetype="text/plain")
+    return send_from_directory(os.path.dirname(stored), os.path.basename(stored),
+                               mimetype="image/png")
 
 
 @app.get("/api/day/<int:day_id>/report.pdf")
