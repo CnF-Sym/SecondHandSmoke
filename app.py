@@ -34,10 +34,12 @@ from flask import Flask, jsonify, request, render_template, Response, send_from_
 
 import cards
 import db
+import destinations
 import handoff
 import media
 import offload
 import pdfreport
+import presets
 import proxies
 import reports
 import storage
@@ -290,35 +292,10 @@ def add_destination():
     if not day:
         return jsonify(error="Create a shoot day first"), 400
     d = request.get_json(silent=True) or {}
-    raw_path = (d.get("path") or "").strip()
-    if not raw_path:
-        return jsonify(error="Choose a destination folder"), 400
-    path = storage.canonical(raw_path)
-    label = (d.get("label") or os.path.basename(path) or "Destination").strip()[:80]
-    role = d.get("role") or "backup"
-    if role not in ("primary", "backup", "offsite"):
-        return jsonify(error="Destination role must be primary, backup or offsite"), 400
-    try:
-        info = storage.inspect_path(path)
-    except storage.StorageError as exc:
-        return jsonify(error=str(exc)), 400
-    if not os.access(info["path"], os.W_OK | os.R_OK):
-        return jsonify(error=f"No read/write access to {info['path']}"), 400
-
-    existing_device = db.q1(
-        "SELECT label FROM destinations WHERE day_id=? AND device_id=?",
-        (day["id"], info["device_id"]),
-    )
-    if existing_device:
-        return jsonify(error=f"{existing_device['label']} is already on this physical drive"), 400
-    try:
-        db.ex("""INSERT INTO destinations
-              (day_id,label,path,canonical_path,device_id,volume_uuid,role)
-              VALUES (?,?,?,?,?,?,?)""",
-              (day["id"], label, info["path"], info["path"], info["device_id"],
-               info["volume_uuid"], role))
-    except Exception:
-        return jsonify(error="That destination is already on this day"), 400
+    info, error = destinations.attach(day["id"], d.get("path"),
+                                      d.get("label"), d.get("role") or "backup")
+    if error:
+        return jsonify(error=error), 400
     return jsonify(ok=True)
 
 
@@ -707,6 +684,60 @@ def manifest(card_id):
     return jsonify(ok=True, paths=written)
 
 
+@app.get("/api/presets")
+def list_presets():
+    return jsonify(folders=presets.list_all())
+
+
+@app.post("/api/preset")
+def save_preset():
+    day = active_day()
+    if not day:
+        return jsonify(error="Start a shoot day before saving a preset"), 400
+    body = request.get_json(silent=True) or {}
+    preset_id, error = presets.save_from_day(
+        day["id"], body.get("name"), int(body.get("folder_id") or 0))
+    if error:
+        return jsonify(error=error), 400
+    return jsonify(ok=True, preset_id=preset_id)
+
+
+@app.post("/api/preset/<int:preset_id>/apply")
+def apply_preset(preset_id):
+    day = active_day()
+    if not day:
+        return jsonify(error="Start a shoot day before applying a preset"), 400
+    if job_running():
+        return jsonify(error="Another job is already running"), 409
+    result, error = presets.apply(preset_id, day["id"])
+    if error:
+        return jsonify(error=error), 400
+    return jsonify(ok=True, **result)
+
+
+@app.delete("/api/preset/<int:preset_id>")
+def remove_preset(preset_id):
+    presets.delete_preset(preset_id)
+    return jsonify(ok=True)
+
+
+@app.post("/api/preset-folder")
+def add_preset_folder():
+    body = request.get_json(silent=True) or {}
+    folder_id, error = presets.create_folder(body.get("name"))
+    if error:
+        return jsonify(error=error), 400
+    return jsonify(ok=True, folder_id=folder_id)
+
+
+@app.delete("/api/preset-folder/<int:folder_id>")
+def remove_preset_folder(folder_id):
+    error = presets.delete_folder(folder_id)
+    if error:
+        return jsonify(error=error), 400
+    return jsonify(ok=True)
+
+
 @app.post("/api/report-branding")
 def report_branding():
     """Store the production name, and the logo, however it was chosen.
@@ -816,6 +847,7 @@ def state():
                 "layouts": list(pdfreport.LAYOUTS)},
         "branding": {"production": db.setting(pdfreport.SETTING_PRODUCTION) or "",
                      "logo": db.setting(pdfreport.SETTING_LOGO) or ""},
+        "presets": presets.list_all(),
         "destinations": [], "cards": [],
         "job": latest_job(),
         "sync": None,

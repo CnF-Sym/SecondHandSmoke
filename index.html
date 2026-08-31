@@ -46,6 +46,26 @@
       <button class="btn" onclick="createDay()">Start day</button>
     </section>
 
+    <section class="panel" id="presetPanel">
+      <h2>Presets</h2>
+      <p class="note">Save this day's drives and report branding, and put them
+        back on tomorrow's day in one click. A preset never changes how a card
+        is verified — drives it adds go through exactly the same checks as
+        drives you add by hand.</p>
+      <div id="presetList"></div>
+      <p class="note" id="presetResult" hidden></p>
+      <div class="field-row">
+        <input id="presetName" placeholder="Preset name, e.g. SHOW A — three drives">
+        <select id="presetFolder" style="max-width:170px"></select>
+      </div>
+      <button class="btn ghost" onclick="savePreset()">Save this day as a preset</button>
+      <div class="field-row">
+        <input id="presetFolderName" placeholder="New folder, e.g. Season 2">
+        <button class="btn ghost sm" onclick="addPresetFolder()"
+          style="max-width:120px">Add folder</button>
+      </div>
+    </section>
+
     <section class="panel" id="reportPanel">
       <h2>Reports</h2>
       <p class="note" id="pdfNote"></p>

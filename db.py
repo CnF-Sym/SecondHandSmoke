@@ -253,6 +253,42 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS preset_folders (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+-- A saved job configuration. folder_id 0 means ungrouped, rather than NULL,
+-- so the UNIQUE below actually holds: SQLite treats every NULL as distinct,
+-- which would let a hundred identically named presets pile up outside folders.
+CREATE TABLE IF NOT EXISTS presets (
+    id              INTEGER PRIMARY KEY,
+    folder_id       INTEGER NOT NULL DEFAULT 0,
+    name            TEXT NOT NULL,
+    project         TEXT,
+    production_name TEXT,
+    logo_path       TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    UNIQUE(folder_id, name)
+);
+
+-- The drives a preset expects. device_id is recorded as it was when the preset
+-- was saved: it is never used to choose a drive, only to notice that the drive
+-- currently mounted at this path is not the one the preset was built from, and
+-- say so.
+CREATE TABLE IF NOT EXISTS preset_destinations (
+    id          INTEGER PRIMARY KEY,
+    preset_id   INTEGER NOT NULL REFERENCES presets(id) ON DELETE CASCADE,
+    position    INTEGER NOT NULL DEFAULT 0,
+    label       TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    role        TEXT NOT NULL,
+    device_id   TEXT,
+    volume_uuid TEXT
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -270,6 +306,8 @@ CREATE INDEX IF NOT EXISTS idx_waveform_candidates_rank
     ON waveform_candidates(camera_file_id, rank);
 CREATE INDEX IF NOT EXISTS idx_dailies_state ON dailies(state);
 CREATE INDEX IF NOT EXISTS idx_handoff_exports_state ON handoff_exports(state);
+CREATE INDEX IF NOT EXISTS idx_preset_destinations_preset
+    ON preset_destinations(preset_id);
 """
 
 

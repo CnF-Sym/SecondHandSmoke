@@ -154,6 +154,11 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
   line-height:1.55}
 .note code{color:var(--text)}
 .note.warn{color:var(--work)}
+.preset-folder{display:flex; align-items:center; justify-content:space-between;
+  gap:8px; background:var(--panel-2); padding:7px 12px; font-size:10px;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--dim)}
+.preset-folder .btn{padding:3px 8px; font-size:9px}
+.row .path{font-family:var(--mono)}
 .note.first-run{color:var(--cyan); border-left:2px solid var(--cyan);
   padding-left:10px; opacity:.9}
 

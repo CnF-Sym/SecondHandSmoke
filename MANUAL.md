@@ -269,6 +269,11 @@ they belong to the production rather than the machine:
 | `report_production_name` | Reports panel | Printed at the top of the PDF report |
 | `report_logo_path` | Reports panel | Image placed on the PDF's first page |
 
+Presets live in their own tables rather than in settings — `preset_folders`,
+`presets` and `preset_destinations` — because they are a list, not a
+preference. Each preset's logo copy lives beside the active one, as
+`branding/preset_<id>.png`.
+
 A logo can be picked with a file dialog, dropped onto the Reports panel, or
 typed as a path. All three arrive at `pdfreport.store_logo()`, which decodes the
 bytes, verifies they are really an image, resizes anything over 2400 px, and
@@ -842,6 +847,12 @@ must be `application/json` and must come from the tool's own origin.
 | `POST` | `/api/day/<day>/waveform` | Run the waveform fallback |
 | `POST` | `/api/day/<day>/handoff?rebuild=1` | Build the editorial handoff |
 | `GET` | `/api/day/<day>/handoff/notes` | The operator notes, rendered |
+| `GET` | `/api/presets` | Every preset folder and its presets |
+| `POST` | `/api/preset` | Save the active day's setup. Body: `name`, `folder_id` |
+| `POST` | `/api/preset/<id>/apply` | Attach a preset's drives to the active day |
+| `DELETE` | `/api/preset/<id>` | Delete a preset and its own logo copy |
+| `POST` | `/api/preset-folder` | Create a folder. Body: `name` |
+| `DELETE` | `/api/preset-folder/<id>` | Delete a folder; its presets are kept |
 | `GET` | `/api/day/<day>/report` | The day report HTML |
 | `GET` | `/api/day/<day>/report.pdf?layout=` | The day report as a branded PDF; `table` or `metadata`. 503 with the reason when reportlab is absent |
 | `POST` | `/api/report-branding` | Store the production name and logo path. Body: `production`, `logo` |
@@ -1021,6 +1032,35 @@ report and the format gate are untouched.
 
 `start.command` still runs `app.py` directly; this module is only the entry
 point used inside the application bundle. It adds no behaviour to the offload.
+
+### `destinations.py` — attaching a drive to a day
+
+| Function | Purpose |
+|---|---|
+| `attach(day_id, path, label, role)` | `(info, error)`; exactly one is None |
+| `ROLES` | `primary`, `backup`, `offsite` |
+
+One function, because there is more than one way to ask: typed into the
+interface, or applied from a preset. A preset that could attach a drive by a
+slacker set of rules than the interface does would be a hole straight through
+the two-drive requirement.
+
+### `presets.py` — saved job configurations
+
+| Function | Purpose |
+|---|---|
+| `list_all()` | Folders, each with its presets and their drives |
+| `create_folder(name)` / `delete_folder(id)` | Deleting a folder keeps its presets |
+| `save_from_day(day_id, name, folder_id)` | Captures drives, project and branding |
+| `apply(preset_id, day_id)` | Attaches drives; reports each one individually |
+| `preset_logo_path(preset_id)` | Each preset owns a copy of its logo |
+| `delete_preset(id)` | Removes the preset, its drives and its own logo copy |
+
+Applying is never all-or-nothing: each destination comes back as attached,
+skipped or failed with a reason, because three drives where two are mounted is
+an ordinary morning. A preset records the `device_id` each path had when it was
+saved; that is never used to *choose* a drive, only to notice that the drive
+mounted there now is a different one and say so.
 
 ### `thumbnails.py` — one frame per clip, for the report
 

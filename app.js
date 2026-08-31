@@ -375,6 +375,123 @@ function renderReports(state) {
 // ffmpeg is optional and external, and its absence is easy to misread as the
 // tool being broken. Say plainly which half still works, because the half that
 // still works is the half that decides whether a card can be formatted.
+// Presets — saved drives and report branding, grouped into folders.
+// Applying one is reported item by item rather than as a single yes or no:
+// three drives where two are mounted is an ordinary morning, and refusing the
+// two that are there because the third is not would be actively unhelpful.
+let presetFolderChoice = "0";
+
+function renderPresets(state) {
+  const groups = state.presets || [];
+  const box = $("presetList");
+  const rows = [];
+  for (const folder of groups) {
+    if (folder.presets.length === 0 && folder.id === 0) continue;
+    rows.push(`<div class="preset-folder">
+      <span>${esc(folder.name)}</span>
+      ${folder.id ? `<button class="btn ghost sm" title="Delete this folder; its presets are kept"
+        onclick="deletePresetFolder(${folder.id})">Remove folder</button>` : ""}
+    </div>`);
+    if (!folder.presets.length) {
+      rows.push(`<div class="row"><span class="grow empty">Empty</span></div>`);
+      continue;
+    }
+    for (const preset of folder.presets) {
+      const drives = preset.destinations.length;
+      const detail = preset.destinations
+        .map(d => `${esc(d.label)} (${esc(d.role)})`).join(" · ");
+      rows.push(`<div class="row">
+        <span class="grow">
+          <b>${esc(preset.name)}</b>
+          <span class="path">${drives} drive${drives === 1 ? "" : "s"} · ${detail}</span>
+        </span>
+        <button class="btn ghost sm" onclick="applyPreset(${preset.id})">Apply</button>
+        <button class="btn ghost sm" onclick="deletePreset(${preset.id})">Delete</button>
+      </div>`);
+    }
+  }
+  box.innerHTML = rows.length
+    ? `<div class="list">${rows.join("")}</div>`
+    : `<p class="empty">No presets yet. Set up a day's drives, then save it here.</p>`;
+
+  const select = $("presetFolder");
+  if (document.activeElement !== select) {
+    select.innerHTML = groups.map(f =>
+      `<option value="${f.id}">${esc(f.id ? f.name : "No folder")}</option>`).join("");
+    select.value = groups.some(f => String(f.id) === presetFolderChoice)
+      ? presetFolderChoice : "0";
+  }
+}
+
+async function savePreset() {
+  const name = $("presetName").value.trim();
+  if (!name) return toast("Name the preset first.", true);
+  presetFolderChoice = $("presetFolder").value;
+  try {
+    await api("/api/preset", { method: "POST", body: JSON.stringify({
+      name, folder_id: Number(presetFolderChoice) }) });
+    $("presetName").value = "";
+    toast(`Saved "${name}".`);
+  } catch (err) { /* api() has already said why */ }
+  refresh();
+}
+
+async function addPresetFolder() {
+  const name = $("presetFolderName").value.trim();
+  if (!name) return toast("Name the folder first.", true);
+  try {
+    await api("/api/preset-folder", { method: "POST",
+                                      body: JSON.stringify({ name }) });
+    $("presetFolderName").value = "";
+    toast(`Folder "${name}" added.`);
+  } catch (err) { /* api() has already said why */ }
+  refresh();
+}
+
+async function deletePresetFolder(id) {
+  await api(`/api/preset-folder/${id}`, { method: "DELETE" });
+  toast("Folder removed. Its presets were kept.");
+  refresh();
+}
+
+async function deletePreset(id) {
+  await api(`/api/preset/${id}`, { method: "DELETE" });
+  refresh();
+}
+
+async function applyPreset(id) {
+  let result;
+  try {
+    result = await api(`/api/preset/${id}/apply`, { method: "POST" });
+  } catch (err) {
+    return;
+  }
+  const lines = [];
+  if (result.attached.length) {
+    lines.push(`<b>Attached:</b> ${result.attached.map(d => esc(d.label)).join(", ")}.`);
+  }
+  if (result.skipped.length) {
+    lines.push(`Already on this day: ${result.skipped.map(d => esc(d.label)).join(", ")}.`);
+  }
+  for (const failure of result.failed) {
+    lines.push(`<b>${esc(failure.label)} was not added:</b> ${esc(failure.reason)}`);
+  }
+  for (const warning of result.warnings) lines.push(esc(warning));
+  if (result.project) {
+    lines.push(`This preset was saved on project <b>${esc(result.project)}</b>. `
+      + "The day you are on keeps its own project name.");
+  }
+  const note = $("presetResult");
+  note.hidden = lines.length === 0;
+  note.className = (result.failed.length || result.warnings.length)
+    ? "note warn" : "note";
+  note.innerHTML = lines.join("<br>");
+  toast(result.attached.length
+    ? `Applied "${esc(result.preset)}".`
+    : `Nothing new to attach from "${esc(result.preset)}".`);
+  refresh();
+}
+
 function renderTools(tools) {
   const box = $("toolStatus");
   if (!box) return;
@@ -890,6 +1007,7 @@ async function refresh() {
   renderSteps(s);
   renderTools(s.tools);
   renderReports(s);
+  renderPresets(s);
 
   // Sync, proxies and dailies all read from verified copies, so none of them
   // can do anything until at least one card has cleared the gate.
@@ -898,6 +1016,7 @@ async function refresh() {
   setWaiting("proxyPanel", !anyCleared);
   setWaiting("handoffPanel", !anyCleared);
   setWaiting("reportPanel", !s.day);
+  setWaiting("presetPanel", !s.day);
   $("firstRun").hidden = (s.days || []).length > 0;
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&

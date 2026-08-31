@@ -223,6 +223,38 @@ amber warning. A drive that does that twice should leave the set.
 
 ---
 
+## Presets
+
+The same show comes back tomorrow with the same three drives, the same project
+and the same logo on the paperwork. Setting that up by hand every morning is
+how a drive ends up in the wrong slot.
+
+Save a day's setup as a preset and put it back on the next day in one click.
+Presets group into folders, so a season or a client is one list rather than
+twenty. A preset holds the destinations and their roles, the project name and
+the report branding — including its own copy of the logo, so two shows do not
+end up sharing whichever logo was set up last.
+
+Two things a preset deliberately does **not** do:
+
+- **It cannot loosen anything.** Drives are attached through exactly the same
+  function the interface uses, with the same path checks, the same access
+  checks, and the same refusal to count two folders on one physical disk as two
+  drives. There is no second, slacker route to a destination.
+- **It does not rename anything.** Applying a preset never changes an existing
+  day's project name — that day already has folders on three drives with that
+  name in the path. The preset's project is reported, for a day you have not
+  made yet.
+
+Applying is never all-or-nothing. Three drives where two are mounted is an
+ordinary morning, so each destination is reported on its own: attached, already
+there, or refused with the reason. And if the drive currently at a familiar
+path is not the physical drive the preset was saved with, it is attached and
+you are told — drives get rotated, cloned and relabelled, but "SHOW_A already
+has Monday on it" quietly ceasing to be true is worth a sentence.
+
+---
+
 ## Reports
 
 Every shoot day produces an HTML report — destinations, per-card format
@@ -488,6 +520,8 @@ out of scope.
 | `waveform.py` | Verified-master audio fingerprints and conservative FFT matching |
 | `handoff.py` | Checksummed review dailies and FCPXML/ALE/JSON handoff queue |
 | `storage.py` | Physical-drive identity, free-space and path-safety checks |
+| `destinations.py` | Attaching a drive to a day — the one route, used by both |
+| `presets.py` | Saved job configurations and their folders |
 | `version.py`, `VERSION` | The version number, read from one file |
 | `toolpaths.py` | Finding ffmpeg and ffprobe, from a shell or from Finder |
 | `server_main.py` | Server entry point used inside the macOS application |

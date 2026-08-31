@@ -2055,5 +2055,155 @@ check("thumbnails never write to the catalog",
 check("thumbnails never touch the format gate",
       "card_status" not in thumb_source and "import reports" not in thumb_source)
 
+print("\n[31] presets cannot loosen anything")
+
+import presets
+
+folder_id, error = presets.create_folder("SEASON 2")
+check("a preset folder is created", folder_id and not error, error)
+_, duplicate_error = presets.create_folder("SEASON 2")
+check("two folders cannot share a name", bool(duplicate_error), duplicate_error)
+
+_, error = presets.save_from_day(day_id, "", folder_id)
+check("a preset must be named", bool(error), error)
+_, error = presets.save_from_day(999999, "GHOST", folder_id)
+check("a preset cannot be saved from a day that does not exist", bool(error), error)
+
+db.setting(pdfreport.SETTING_PRODUCTION, "SEASON TWO")
+preset_id, error = presets.save_from_day(day_id, "THREE DRIVES", folder_id)
+check("the day's setup is saved as a preset", preset_id and not error, error)
+
+saved = [dict(row) for row in db.q(
+    "SELECT * FROM preset_destinations WHERE preset_id=? ORDER BY position",
+    (preset_id,))]
+check("the preset remembers every drive and its role",
+      len(saved) == 2 and saved[0]["role"] == "primary",
+      json.dumps([{"label": r["label"], "role": r["role"]} for r in saved]))
+check("the preset remembers which physical drive each path was",
+      all(row["device_id"] for row in saved))
+
+# Saving twice under one name replaces it, rather than making a second.
+again_id, error = presets.save_from_day(day_id, "THREE DRIVES", folder_id)
+check("saving over a preset replaces it instead of piling up",
+      again_id == preset_id and not error
+      and db.q1("SELECT COUNT(*) c FROM presets WHERE name='THREE DRIVES'")["c"] == 1)
+check("replacing a preset does not duplicate its drives",
+      db.q1("SELECT COUNT(*) c FROM preset_destinations WHERE preset_id=?",
+            (preset_id,))["c"] == 2)
+
+# A fresh day to apply it to.
+status, body = post("/api/day", project="PROJECT_01", name="DAY_02",
+                    shoot_date="2026-01-17")
+check("a second shoot day is created for the preset", status == 200, body)
+second_day = body["day_id"]
+
+result, error = presets.apply(preset_id, second_day)
+check("applying a preset attaches its drives",
+      not error and len(result["attached"]) == 2, error or json.dumps(result))
+check("the attached drives are on the new day, with their roles",
+      db.q1("SELECT COUNT(*) c FROM destinations WHERE day_id=? AND role='primary'",
+            (second_day,))["c"] == 1
+      and db.q1("SELECT COUNT(*) c FROM destinations WHERE day_id=?",
+                (second_day,))["c"] == 2)
+
+# Applying again is not an error and does not double anything up.
+result, error = presets.apply(preset_id, second_day)
+check("applying a preset twice skips what is already there",
+      not error and len(result["skipped"]) == 2 and not result["attached"],
+      json.dumps(result))
+check("a second apply did not add a third destination",
+      db.q1("SELECT COUNT(*) c FROM destinations WHERE day_id=?",
+            (second_day,))["c"] == 2)
+
+# The whole point: a preset is not a second, slacker route to a destination.
+alias_id, _ = presets.save_from_day(day_id, "ALIAS TEST", 0)
+db.ex("DELETE FROM preset_destinations WHERE preset_id=?", (alias_id,))
+db.ex("""INSERT INTO preset_destinations
+         (preset_id, position, label, path, role, device_id, volume_uuid)
+         VALUES (?,?,?,?,?,?,?)""",
+      (alias_id, 0, "SNEAKY", DRIVE_A_ALIAS, "backup", None, None))
+result, error = presets.apply(alias_id, second_day)
+check("a preset cannot slip a second folder on an existing drive past the gate",
+      not error and len(result["failed"]) == 1
+      and "physical drive" in result["failed"][0]["reason"],
+      json.dumps(result))
+check("the refused destination really was not added",
+      db.q1("SELECT COUNT(*) c FROM destinations WHERE day_id=?",
+            (second_day,))["c"] == 2)
+
+# Drives get rotated, cloned and relabelled. A preset that refused to run
+# because the disk is different would be useless; one that says nothing would
+# let "SHOW_A already has Monday on it" quietly stop being true.
+status, body = post("/api/day", project="PROJECT_01", name="DAY_03",
+                    shoot_date="2026-01-18")
+third_day = body["day_id"]
+db.ex("UPDATE preset_destinations SET device_id='disk99' WHERE preset_id=?",
+      (preset_id,))
+result, error = presets.apply(preset_id, third_day)
+check("a different physical drive at a familiar path is attached anyway",
+      not error and len(result["attached"]) == 2, json.dumps(result))
+check("and it is said out loud",
+      len(result["warnings"]) == 2
+      and "different physical drive" in result["warnings"][0],
+      json.dumps(result["warnings"]))
+
+# Branding travels with the preset, including its own copy of a logo.
+if _pillow:
+    logo_source = os.path.join(RIG, "preset_logo.png")
+    _PILImage.new("RGBA", (40, 20), (0, 200, 120, 255)).save(logo_source)
+    pdfreport.store_logo(open(logo_source, "rb").read())
+    db.setting(pdfreport.SETTING_PRODUCTION, "THE OTHER SHOW")
+    branded_id, _ = presets.save_from_day(day_id, "BRANDED", folder_id)
+    own_logo = presets.preset_logo_path(branded_id)
+    check("a preset keeps its own copy of its logo, not a pointer to the slot",
+          os.path.isfile(own_logo) and own_logo != pdfreport.logo_store_path())
+
+    pdfreport.clear_logo()
+    db.setting(pdfreport.SETTING_PRODUCTION, "SOMETHING ELSE")
+    presets.apply(branded_id, third_day)
+    check("applying a preset restores its production name",
+          db.setting(pdfreport.SETTING_PRODUCTION) == "THE OTHER SHOW")
+    check("applying a preset restores its logo",
+          os.path.isfile(db.setting(pdfreport.SETTING_LOGO) or ""))
+
+    presets.delete_preset(branded_id)
+    check("deleting a preset takes its own logo copy and nothing else",
+          not os.path.isfile(own_logo) and os.path.isfile(logo_source))
+
+# A day's project name is not something a preset gets to change quietly: that
+# day already has folders on three drives with that name in the path.
+check("applying a preset never renames the day's project",
+      db.q1("SELECT project FROM days WHERE id=?", (third_day,))["project"]
+      == "PROJECT_01")
+
+# Deleting a container should not delete its contents by surprise.
+presets.delete_folder(folder_id)
+check("deleting a folder keeps its presets", db.q1(
+    "SELECT folder_id FROM presets WHERE id=?", (preset_id,))["folder_id"] == 0)
+check("the folder itself is gone",
+      db.q1("SELECT id FROM preset_folders WHERE id=?", (folder_id,)) is None)
+check("Ungrouped is not a folder anyone can delete",
+      bool(presets.delete_folder(0)))
+
+presets.delete_preset(preset_id)
+check("deleting a preset removes its drives too",
+      db.q1("SELECT COUNT(*) c FROM preset_destinations WHERE preset_id=?",
+            (preset_id,))["c"] == 0)
+
+# The HTTP surface, and the one refusal that matters on it.
+check("presets are listed over HTTP", c.get("/api/presets").status_code == 200)
+status, body = post("/api/preset/999999/apply")
+check("applying a preset that does not exist is refused with a reason",
+      status == 400 and "no longer exists" in body.get("error", ""), body)
+
+# Structural: there is one way to attach a drive, and presets use it.
+preset_source = open("presets.py", encoding="utf-8").read()
+check("presets never insert a destination themselves",
+      "INSERT INTO destinations" not in preset_source
+      and "destinations.attach(" in preset_source)
+check("presets never touch the format gate or the copy records",
+      "card_status" not in preset_source and "INSERT INTO copies" not in preset_source
+      and "UPDATE copies" not in preset_source)
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
