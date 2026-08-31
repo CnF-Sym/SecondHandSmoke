@@ -238,6 +238,10 @@ onto the panel, or type a path, whichever is quickest. Then choose a layout:
   and its verified/failed state on each destination drive.
 - **Metadata PDF** — every clip with scene, take, duration, start timecode,
   format, audio and proxy state.
+- **Thumbnail PDF** — a contact sheet. One frame per camera clip with its name,
+  scene and take, duration and start timecode. This is the one a producer
+  actually reads: a page of frames answers "is this the day I think it is" in a
+  second, which a wall of hashes does not.
 
 Both carry the SAFE TO FORMAT or DO NOT FORMAT stamp for each card, and both
 are generated from **one reading of the catalog**. The PDF writer cannot query
@@ -247,6 +251,23 @@ could disagree about whether a card is safe to format is the one bug this
 program exists to prevent, so they are not two code paths.
 
 The HTML report is unchanged and is not going anywhere. The PDF is an addition.
+
+**About the frames.** They are pulled with ffmpeg from the **verified copy on
+the primary drive**, never from the card — the same rule the proxy builder
+follows, and the reason report frames still work after a card has cleared and
+been pulled. A frame is only ever made from a copy in the `verified` state; a
+picture of a half-written file in a document that also says SAFE TO FORMAT is
+the wrong thing to hand anyone.
+
+Thumbnails are cosmetic and nothing about them can change a checksum, a copy
+record, a manifest or the format gate. A clip that will not decode gets a
+labelled empty space in the report rather than being quietly dropped, and
+without ffmpeg the layout still builds and says why the frames are missing.
+
+Frames are cached by content hash beside the catalog, so they never go stale
+and re-generating a report does not re-decode the day. The first thumbnail
+report of a big day takes a moment; every one after it is immediate. Nothing is
+written to the production's drives.
 
 **What happens to a logo you choose.** It is copied into this program's own
 folder, not referenced where it sits. Two reasons, and neither is convenience: a
@@ -460,6 +481,7 @@ out of scope.
 | `offload.py` | The copy and verify engine |
 | `reports.py` | Format gate, MHL writer, report data and the HTML report |
 | `pdfreport.py` | The branded PDF report, rendered from `reports.day_data()` |
+| `thumbnails.py` | One cached frame per camera clip, for the report |
 | `media.py` | ffprobe metadata and recorder CSV sound-report parsing |
 | `proxies.py` | Resumable ProRes Proxy queue, validation and progress |
 | `sync.py` | Frame-accurate camera/sound overlap matching and relationships |

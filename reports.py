@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 import db
 import handoff
 import sync
+import thumbnails
 import version
 import waveform
 
@@ -365,7 +366,7 @@ def display_codec(value):
 # PDF that says SAFE TO FORMAT is quoting the same card_status() call the HTML
 # quoted, from the same dict, in the same call.
 
-_MEDIA_SQL = """SELECT f.rel_path, f.category, m.*,
+_MEDIA_SQL = """SELECT f.rel_path, f.category, f.src_hash, m.*,
                        p.state proxy_status, p.output_path proxy_path,
                        p.error proxy_error
                 FROM files f LEFT JOIN media_metadata m ON m.file_id=f.id
@@ -406,6 +407,22 @@ def gate_stamp(gate):
 
 def _dicts(result):
     return [dict(row) for row in result]
+
+
+def _media_rows(card_id):
+    """Media rows, each carrying the report frame that already exists for it.
+
+    Cache lookup only. Gathering a shoot day never decodes anything: a report
+    that wants pictures warms the cache before it asks, and every other reader
+    simply finds None and prints no picture. Thumbnails are cosmetic and this
+    is where that is enforced — nothing here can fail in a way that changes
+    what the report says about a card.
+    """
+    rows = _dicts(db.q(_MEDIA_SQL, (card_id,)))
+    for row in rows:
+        row["thumbnail"] = (thumbnails.cached_frame(row.get("src_hash"))
+                            if row.get("category") == "video" else None)
+    return rows
 
 
 def day_data(day_id):
@@ -461,7 +478,7 @@ def day_data(day_id):
             "gate": card_status(card["id"]),
             "files": files,
             "copy_state": copy_state,
-            "media": _dicts(db.q(_MEDIA_SQL, (card["id"],))),
+            "media": _media_rows(card["id"]),
             "sync": _dicts(db.q(_SYNC_SQL, (card["id"],))),
             "waveform": _dicts(db.q(_WAVEFORM_SQL, (card["id"],))),
         })

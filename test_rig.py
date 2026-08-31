@@ -1919,5 +1919,141 @@ for name in ("renderTools", "renderReports", "renderSteps", "renderCards",
              "renderDestSlots", "renderJob", "setWaiting", "computeSteps"):
     check(f"{name}() exists", name in defined)
 
+print("\n[30] report thumbnails are cosmetic and never touch the record")
+
+import thumbnails
+
+gate_before = reports.card_status(cam_id)["safe"]
+
+check("nothing is cached before anything asks", all(
+    thumbnails.cached_frame(row["src_hash"]) is None
+    for row in db.q("SELECT src_hash FROM files WHERE card_id=? AND category='video'",
+                    (cam_id,))))
+
+# The rig's camera clips are synthetic bytes, so a real decode of them fails.
+# That is the first thing worth proving: a clip nobody can draw is a gap in a
+# report, never an error and never a changed record.
+real_row = db.q1("SELECT * FROM files WHERE card_id=? AND category='video' "
+                 "ORDER BY rel_path LIMIT 1", (cam_id,))
+check("an undecodable clip simply has no frame",
+      thumbnails.frame_for(dict(real_row), day_id) is None)
+check("a failed frame does not change format clearance",
+      reports.card_status(cam_id)["safe"] == gate_before)
+
+# Now with a decoder that works, so the rest of the behaviour can be seen.
+extract_calls = []
+real_extract = thumbnails._extract
+
+
+# A real 48x27 JPEG, so the PDF path is exercised with something reportlab can
+# actually place, and so this section does not depend on Pillow being present.
+TINY_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4p"
+    "LSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09P"
+    "T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAAbADADASIA"
+    "AhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEB"
+    "AQAAAAAAAAAAAAAAAAAAAAH/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCegKgA"
+    "AAAAAAAAD//Z")
+
+
+def fake_extract(input_path, output_path, seek):
+    extract_calls.append({"input": input_path, "output": output_path, "seek": seek})
+    with open(output_path, "wb") as handle:
+        handle.write(TINY_JPEG)
+    return True
+
+
+thumbnails._extract = fake_extract
+try:
+    frame = thumbnails.frame_for(dict(real_row), day_id)
+    check("a frame is made and cached under the file's content hash",
+          frame == thumbnails.cache_path(real_row["src_hash"])
+          and os.path.isfile(frame), frame)
+
+    # The rule the proxy builder already follows, and the reason report frames
+    # still work after a card has cleared and been pulled.
+    primary = db.q1("SELECT id, path FROM destinations WHERE day_id=? AND role='primary'"
+                    " ORDER BY id LIMIT 1", (day_id,))
+    verified = db.q1("SELECT dest_path FROM copies WHERE file_id=? AND destination_id=?"
+                     " AND state='verified'", (real_row["id"], primary["id"]))
+    check("the frame is pulled from the verified primary copy, not the card",
+          extract_calls and extract_calls[-1]["input"] == verified["dest_path"],
+          extract_calls[-1]["input"] if extract_calls else "no call")
+    card_row = db.q1("SELECT source_path FROM cards WHERE id=?", (cam_id,))
+    check("no frame was ever read off the source card",
+          not any(call["input"].startswith(card_row["source_path"])
+                  for call in extract_calls))
+
+    # Re-generating a report must not re-decode the day.
+    before = len(extract_calls)
+    thumbnails.frame_for(dict(real_row), day_id)
+    check("a cached frame is reused rather than decoded again",
+          len(extract_calls) == before)
+
+    # A frame comes off a verified copy or it does not come at all. A picture
+    # of a half-written file, in a document that also says SAFE TO FORMAT, is
+    # exactly the wrong thing to hand a producer.
+    db.ex("UPDATE copies SET state='copied' WHERE file_id=? AND destination_id=?",
+          (real_row["id"], primary["id"]))
+    reports.invalidate_gate_cache(cam_id)
+    check("an unverified copy is never used as a source for a frame",
+          thumbnails._verified_primary_copy(real_row["id"], day_id) is None)
+    db.ex("UPDATE copies SET state='verified' WHERE file_id=? AND destination_id=?",
+          (real_row["id"], primary["id"]))
+    reports.invalidate_gate_cache(cam_id)
+
+    summary = thumbnails.build_for_day(day_id)
+    check("building a day reports what it made and what it reused",
+          summary["available"] and (summary["made"] + summary["cached"]) > 0,
+          json.dumps(summary))
+
+    # The report gatherer must never decode. It reads the cache and moves on.
+    calls_before = len(extract_calls)
+    data = reports.day_data(day_id)
+    check("gathering a day never decodes a frame", len(extract_calls) == calls_before)
+    frames = [m for entry in data["cards"] for m in entry["media"]
+              if m.get("category") == "video" and m.get("thumbnail")]
+    check("the report data carries the frames it found", bool(frames))
+    check("sound rows are never given a frame",
+          all(m.get("thumbnail") is None for entry in data["cards"]
+              for m in entry["media"] if m.get("category") != "video"))
+
+    if pdf_ok:
+        sheet = pdfreport.build(day_id, "thumbnail",
+                                out_path=os.path.join(RIG, "report_thumbnail.pdf"))
+        check("the thumbnail PDF is written and is a PDF",
+              open(sheet, "rb").read(5) == b"%PDF-" and os.path.getsize(sheet) > 1000,
+              f"{os.path.getsize(sheet)} bytes")
+        route = c.get(f"/api/day/{day_id}/report.pdf?layout=thumbnail")
+        check("the thumbnail layout is served", route.status_code == 200, route.status_code)
+finally:
+    thumbnails._extract = real_extract
+
+# With every frame thrown away the report must still build, unchanged in every
+# way that matters.
+removed = thumbnails.clear_cache()
+check("clearing the cache removes only this machine's frames",
+      removed > 0 and os.path.isfile(db.q1(
+          "SELECT dest_path FROM copies WHERE file_id=? AND state='verified' LIMIT 1",
+          (real_row["id"],))["dest_path"]))
+if pdf_ok:
+    bare = pdfreport.build(day_id, "thumbnail",
+                           out_path=os.path.join(RIG, "report_no_frames.pdf"))
+    check("a report with no frames at all is still produced",
+          os.path.getsize(bare) > 1000)
+
+check("the whole thumbnail pass never moved the format gate",
+      reports.card_status(cam_id)["safe"] == gate_before)
+check("the source card is untouched by thumbnails",
+      len(os.listdir(os.path.join(CARDS, "A001_CFEXPRESS"))) > 0)
+
+# Structural: this module is cosmetic, and must have no way to say otherwise.
+thumb_source = open("thumbnails.py", encoding="utf-8").read()
+check("thumbnails never write to the catalog",
+      "db.ex(" not in thumb_source and "INSERT" not in thumb_source
+      and "UPDATE" not in thumb_source)
+check("thumbnails never touch the format gate",
+      "card_status" not in thumb_source and "import reports" not in thumb_source)
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

@@ -255,6 +255,7 @@ before `start.command`.
 | `DIT_FFPROBE` | auto-detected | Explicit path to `ffprobe` |
 | `DIT_FFMPEG` | auto-detected | Explicit path to `ffmpeg` |
 | `DIT_PROBE_TIMEOUT` | `90` | Per-file metadata timeout, seconds |
+| `DIT_THUMB_TIMEOUT` | `30` | Per-clip report-thumbnail timeout, seconds |
 | `DIT_OPERATOR` | login account | Name written into the MHL `<name>` field |
 | `DIT_BROWSE_ROOT` | — | An extra folder the picker may list |
 | `DIT_SLATE_FONT` | auto-detected | Font for the dailies slate |
@@ -710,6 +711,13 @@ above — same destinations, same media, same format-gate verdict — so the two
 documents cannot describe the same day differently. reportlab is required for
 this and nothing else; the HTML report is written either way.
 
+### 14.3c Report thumbnails — `~/SecondHandSmoke/thumbnails/<hash>.jpg`
+
+One JPEG per camera clip, 480 px wide, decoded from the verified primary-drive
+copy at roughly ten per cent into the clip so the frame is not a black slate.
+Cached by content hash on this machine only; never written to a production
+drive and never part of a delivery.
+
 ### 14.4 ProRes proxies — `PROXY/<roll>/<clip>_PXY.mov`
 
 1920×1080 Apple ProRes Proxy, `yuv422p10le`, Apple vendor tag, with a QuickTime
@@ -1013,6 +1021,29 @@ report and the format gate are untouched.
 
 `start.command` still runs `app.py` directly; this module is only the entry
 point used inside the application bundle. It adds no behaviour to the offload.
+
+### `thumbnails.py` — one frame per clip, for the report
+
+| Function | Purpose |
+|---|---|
+| `available()` | `(available, reason)`; frames need ffmpeg, nothing else does |
+| `cached_frame(src_hash)` | The frame already on disk, or None. Decodes nothing |
+| `frame_for(file_row, day_id)` | The frame, building it if needed. Never raises |
+| `build_for_day(day_id)` | Warms the cache; returns made / cached / missing |
+| `clear_cache()` | Deletes this machine's frames and nothing else |
+
+Frames are decoded from the **verified copy on the primary drive**, never from
+the source card, and only from a copy in the `verified` state. The cache is
+keyed by the file's content hash and lives beside the catalog, so it never
+needs invalidating — different content is a different key — and nothing of ours
+is written to the production's drives.
+
+Everything in this module is cosmetic. It writes nothing to the catalog, never
+calls the format gate, and returns None rather than raising on any failure. A
+clip that will not decode is a gap in a report, never a card that fails to
+clear. `reports.day_data()` only ever performs a cache lookup, so gathering a
+shoot day never runs ffmpeg; the thumbnail layout warms the cache before it
+asks.
 
 ### `version.py` — the version number
 

@@ -36,11 +36,10 @@ import os
 
 import db
 import reports
+import thumbnails
 import version
 
-# Two layouts. The thumbnail layout arrives with the frame extraction that
-# feeds it; there is nothing to place until then.
-LAYOUTS = ("table", "metadata")
+LAYOUTS = ("table", "metadata", "thumbnail")
 DEFAULT_LAYOUT = "table"
 
 SETTING_PRODUCTION = "report_production_name"
@@ -97,11 +96,16 @@ def branding():
     return {"production": name, "logo": logo, "logo_error": logo_error}
 
 
-def _logo_box(logo_path, max_width, max_height):
-    """Scaled (width, height) for the logo, or None if it cannot be measured."""
+def _image_box(image_path, max_width, max_height):
+    """Scaled (width, height) that fits the box, or None if unmeasurable.
+
+    Used for the production logo and for report frames alike; neither is worth
+    failing a report over, so an image that cannot be measured is simply not
+    drawn.
+    """
     try:
         from PIL import Image
-        with Image.open(logo_path) as image:
+        with Image.open(image_path) as image:
             width, height = image.size
     except Exception:
         return None
@@ -193,7 +197,7 @@ def _cover(rl, styles, data, brand, layout, story, width):
     day = data["day"]
 
     if brand["logo"]:
-        box = _logo_box(brand["logo"], 60 * mm, 22 * mm)
+        box = _image_box(brand["logo"], 60 * mm, 22 * mm)
         if box:
             from reportlab.platypus import Image as RLImage
             try:
@@ -325,6 +329,90 @@ def _metadata_table(rl, styles, entry, story, width):
     story.append(_table(rl, rows, [width * share for share in shares], cell_colours=colours))
 
 
+THUMBNAIL_COLUMNS = 4
+
+
+def _thumbnail_grid(rl, styles, entry, story, width):
+    """A page of frames. Everything here is allowed to be missing.
+
+    A clip with no frame gets a labelled empty cell rather than being left out:
+    a contact sheet that quietly drops a clip is worse than one that says it
+    could not draw it.
+    """
+    from reportlab.platypus import Image as RLImage
+
+    clips = [m for m in entry["media"] if m.get("category") == "video"]
+    if not clips:
+        story.append(rl["Paragraph"](
+            "No camera clips on this card.", styles["sub"]))
+        return
+
+    gutter = 6
+    cell = (width - gutter * (THUMBNAIL_COLUMNS - 1)) / THUMBNAIL_COLUMNS
+    art = cell - 8
+
+    def cell_flowables(clip):
+        block = []
+        frame = clip.get("thumbnail")
+        drawn = False
+        if frame:
+            box = _image_box(frame, art, art * 0.75)
+            if box:
+                try:
+                    block.append(RLImage(frame, width=box[0], height=box[1],
+                                         hAlign="LEFT"))
+                    drawn = True
+                except Exception:
+                    drawn = False
+        if not drawn:
+            block.append(rl["Paragraph"](
+                f"<font color='{QUIET}'>no frame</font>", styles["cell"]))
+        block.append(rl["Spacer"](1, 3))
+        block.append(rl["Paragraph"](
+            f"<b>{_esc(os.path.basename(clip['rel_path']))}</b>", styles["cell"]))
+        scene_take = " / ".join(v for v in (clip.get("scene"), clip.get("take_name"))
+                                if v)
+        detail = " · ".join(part for part in (
+            scene_take,
+            reports.human_duration(clip.get("duration_seconds")),
+            clip.get("start_timecode") or "",
+        ) if part and part != "—")
+        if detail:
+            block.append(rl["Paragraph"](
+                f"<font color='{QUIET}'>{_esc(detail)}</font>", styles["cell"]))
+        return block
+
+    rows = []
+    for start in range(0, len(clips), THUMBNAIL_COLUMNS):
+        chunk = clips[start:start + THUMBNAIL_COLUMNS]
+        row = [cell_flowables(clip) for clip in chunk]
+        row += [""] * (THUMBNAIL_COLUMNS - len(row))
+        rows.append(row)
+
+    table = rl["LongTable"](rows, colWidths=[cell] * THUMBNAIL_COLUMNS,
+                            hAlign="LEFT")
+    table.setStyle(rl["TableStyle"]([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), gutter),
+    ]))
+    story.append(table)
+
+    without = sum(1 for clip in clips if not clip.get("thumbnail"))
+    if without:
+        ok, reason = thumbnails.available()
+        story.append(rl["Spacer"](1, 4))
+        story.append(rl["Paragraph"](
+            f"<font color='{WARN}'>{without} of {len(clips)} clips have no frame. "
+            + _esc(reason if not ok else
+                   "A frame is only drawn from a verified copy on the primary "
+                   "drive — never from the card. Everything else in this report "
+                   "is unaffected.")
+            + "</font>", styles["sub"]))
+
+
 def build(day_id, layout=DEFAULT_LAYOUT, out_path=None):
     """Write the day's PDF report. Returns its path.
 
@@ -336,6 +424,12 @@ def build(day_id, layout=DEFAULT_LAYOUT, out_path=None):
         raise RuntimeError(reason)
     if layout not in LAYOUTS:
         raise ValueError(f"Unknown report layout: {layout}")
+
+    # Warm the frame cache before the day is gathered, so day_data() finds the
+    # pictures already on disk and never has to decode anything itself. The
+    # first build of a big day takes a moment; every one after it is instant.
+    if layout == "thumbnail":
+        thumbnails.build_for_day(day_id)
 
     data = reports.day_data(day_id)
     if not data:
@@ -372,6 +466,8 @@ def build(day_id, layout=DEFAULT_LAYOUT, out_path=None):
         _card_heading(rl, styles, entry, story)
         if layout == "table":
             _verification_table(rl, styles, data, entry, story, width)
+        elif layout == "thumbnail":
+            _thumbnail_grid(rl, styles, entry, story, width)
         else:
             if entry["media"]:
                 _metadata_table(rl, styles, entry, story, width)

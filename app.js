@@ -207,6 +207,12 @@ function openReport(id) { window.open(`/api/day/${id}/report`, "_blank"); }
 
 function openPdf(layout) {
   if (!activeDayId) return toast("Start a shoot day first.");
+  if (layout === "thumbnail") {
+    // The first thumbnail report decodes one frame per clip off the verified
+    // primary drive. Say so, rather than letting a long quiet wait look like
+    // a hang. After that the frames are cached and it is instant.
+    toast("Pulling a frame from each clip — the first run takes a moment.");
+  }
   window.open(`/api/day/${activeDayId}/report.pdf?layout=${layout}`, "_blank");
 }
 
@@ -350,6 +356,7 @@ function renderReports(state) {
   const ready = Boolean(pdf.available && activeDayId);
   $("pdfTableButton").disabled = !ready;
   $("pdfMetaButton").disabled = !ready;
+  $("pdfThumbButton").disabled = !ready;
 
   if (!pdf.available) {
     note.className = "note warn";
