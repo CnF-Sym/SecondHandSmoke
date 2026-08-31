@@ -1780,9 +1780,12 @@ else:
 check("the interface offers a picker as well as a typed path",
       'type="file"' in open("index.html", encoding="utf-8").read() and
       "sendLogo" in open("app.js", encoding="utf-8").read())
+server_source = open("app.py", encoding="utf-8").read()
 check("a chosen image travels as JSON, so the cross-origin guard is untouched",
-      "logo_data" in open("app.py", encoding="utf-8").read() and
-      "multipart" not in open("app.py", encoding="utf-8").read())
+      "logo_data" in server_source
+      and "request.files" not in server_source
+      and 'request.is_json' in server_source
+      and 'Requests must be sent as application/json' in server_source)
 
 print("\n[26] the track")
 
@@ -1887,6 +1890,34 @@ check("paths, hashes and timecode keep the monospace face", "--mono:" in ui_css)
 # A control that never stops asking for attention has stopped being a signal.
 check("nothing on screen pulses forever",
       "infinite" not in ui_css, "an infinite animation is still defined")
+
+print("\n[29] the interface calls only functions that exist")
+
+# A rewrite of one part of app.js can quietly delete another. The browser only
+# says so at runtime, in a panel nobody may look at during the rig, and this
+# file is not run through a JavaScript engine — so check it here instead.
+defined = set(_re.findall(r"^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)", ui_js,
+                          _re.MULTILINE))
+defined |= set(_re.findall(r"^(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=", ui_js,
+                           _re.MULTILINE))
+
+refresh_body = ui_js.split("async function refresh() {", 1)[1].split("\nasync function", 1)[0]
+called = set(_re.findall(r"\b([a-z][A-Za-z0-9_$]*)\s*\(", refresh_body))
+builtins = {"if", "for", "while", "switch", "catch", "return", "typeof", "await",
+            "some", "every", "filter", "map", "find", "reduce", "includes",
+            "toggle", "esc", "api", "String", "Boolean", "Number",
+            "setTimeout", "clearTimeout",
+            # "var(" appears inside the CSS in a template string, not as a call.
+            "var"}
+missing = sorted(name for name in called - builtins
+                 if name not in defined and f".{name}(" not in refresh_body)
+check("every function the refresh loop calls is defined", not missing,
+      ", ".join(missing))
+
+# The two the interface would silently lose most easily, named outright.
+for name in ("renderTools", "renderReports", "renderSteps", "renderCards",
+             "renderDestSlots", "renderJob", "setWaiting", "computeSteps"):
+    check(f"{name}() exists", name in defined)
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
