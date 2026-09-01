@@ -196,6 +196,21 @@
       <div id="cardList"><p class="empty">Nothing registered yet.</p></div>
     </section>
 
+    <section class="panel" id="drivePanel">
+      <h2>Drive tools</h2>
+      <p class="note">How fast is this drive, and what is already on it. The
+        speed test writes its own scratch file and removes it; indexing only
+        reads. Neither changes anything about a card.</p>
+      <div class="field-row">
+        <input id="drivePath" placeholder="/Volumes/SHOW_A">
+        <input id="driveLabel" placeholder="Label" style="max-width:150px">
+      </div>
+      <button class="btn ghost" onclick="driveSpeed()">Speed test</button>
+      <button class="btn ghost" onclick="driveIndex()">Index drive</button>
+      <p class="note" id="driveResult" hidden></p>
+      <div id="driveList"></div>
+    </section>
+
   </div>
 </main>
 

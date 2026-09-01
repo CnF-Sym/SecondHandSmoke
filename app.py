@@ -35,6 +35,7 @@ from flask import Flask, jsonify, request, render_template, Response, send_from_
 import cards
 import db
 import destinations
+import drivetools
 import handoff
 import media
 import naming
@@ -170,14 +171,16 @@ def start_job(starter, *args, **kwargs):
     """Check "is anything running?" and start, as one atomic step."""
     with _JOB_GATE:
         if (offload.current() is not None or proxies.current() is not None
-                or waveform.current() is not None or handoff.current() is not None):
+                or waveform.current() is not None or handoff.current() is not None
+                or drivetools.current() is not None):
             return None, "Another job is already running"
         return starter(*args, **kwargs)
 
 
 def job_running():
     return (offload.current() is not None or proxies.current() is not None
-            or waveform.current() is not None or handoff.current() is not None)
+            or waveform.current() is not None or handoff.current() is not None
+            or drivetools.current() is not None)
 
 
 def component(value, label):
@@ -214,9 +217,12 @@ def latest_job():
         return waveform.status_snapshot()
     if handoff.current() is not None:
         return handoff.status_snapshot()
+    if drivetools.current() is not None:
+        return drivetools.status_snapshot()
     snapshots = [snapshot for snapshot in
                  (offload.status_snapshot(), proxies.status_snapshot(),
-                  waveform.status_snapshot(), handoff.status_snapshot()) if snapshot]
+                  waveform.status_snapshot(), handoff.status_snapshot(),
+                  drivetools.status_snapshot()) if snapshot]
     if not snapshots:
         return None
     return max(snapshots, key=lambda snapshot:
@@ -534,6 +540,7 @@ def cancel():
     proxies.cancel()
     waveform.cancel()
     handoff.cancel()
+    drivetools.cancel()
     return jsonify(ok=True)
 
 
@@ -683,6 +690,49 @@ def manifest(card_id):
     if not written:
         return jsonify(error="Nothing verified yet — no manifest to write"), 400
     return jsonify(ok=True, paths=written)
+
+
+@app.get("/api/drives")
+def list_drives():
+    return jsonify(drives=drivetools.known_drives(),
+                   default_test_bytes=drivetools.DEFAULT_TEST_BYTES)
+
+
+@app.post("/api/drive/speed")
+def drive_speed():
+    body = request.get_json(silent=True) or {}
+    path = storage.canonical((body.get("path") or "").strip())
+    if not _inside_browse_root(path):
+        return jsonify(error="That folder is outside the places this tool may "
+                             "look at."), 403
+    try:
+        size = int(body.get("bytes") or drivetools.DEFAULT_TEST_BYTES)
+    except (TypeError, ValueError):
+        size = drivetools.DEFAULT_TEST_BYTES
+    job, error = start_job(drivetools.start, "speed", path, test_bytes=size)
+    if error:
+        return jsonify(error=error), 409
+    return jsonify(ok=True)
+
+
+@app.post("/api/drive/index")
+def drive_index():
+    body = request.get_json(silent=True) or {}
+    path = storage.canonical((body.get("path") or "").strip())
+    if not _inside_browse_root(path):
+        return jsonify(error="That folder is outside the places this tool may "
+                             "look at."), 403
+    label = (body.get("label") or "").strip()[:80] or None
+    job, error = start_job(drivetools.start, "index", path, label=label)
+    if error:
+        return jsonify(error=error), 409
+    return jsonify(ok=True)
+
+
+@app.delete("/api/drive/<int:drive_id>")
+def forget_drive(drive_id):
+    drivetools.forget(drive_id)
+    return jsonify(ok=True)
 
 
 @app.post("/api/day/<int:day_id>/naming")
@@ -919,6 +969,7 @@ def state():
         "branding": {"production": db.setting(pdfreport.SETTING_PRODUCTION) or "",
                      "logo": db.setting(pdfreport.SETTING_LOGO) or ""},
         "presets": presets.list_all(),
+        "drives": drivetools.known_drives(),
         "naming": {
             "tokens": list(naming.TOKENS),
             "default": naming.DEFAULT_PATTERN,

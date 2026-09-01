@@ -386,6 +386,38 @@ else — the offload, the verification, the HTML report, the format gate — is
 untouched. `start.command` installs it if it can. Inside the macOS application
 it is always present.
 
+## Drive tools
+
+**Speed test.** How fast this drive actually is for an offload, not what the box
+says. It writes a real file, **fsyncs it** so the drive has genuinely taken the
+bytes, then reads it back with the page cache bypassed and checksums what comes
+off. The fsync is the honest part of the write figure — without it you are
+measuring how fast the operating system accepted the bytes, which is a fine way
+to report 3 GB/s from a drive that cannot do 200. If cache bypass cannot be
+established, the read is reported as unverified rather than printed as a fast
+number, because a read speed measured out of RAM is the same lie that makes an
+unverified offload feel quick.
+
+The scratch file goes in the drive's own `.shs-speedtest` folder and is removed
+when the test finishes. It is the only file this program ever removes from a
+drive.
+
+**Drive index.** Walks a drive read-only and remembers what is on it — and
+reads any ASC MHL manifest it finds along the way, ours or another tool's. A
+manifest already lists the files and the day and roll they belong to, so a
+drive that has ever been offloaded by anything that speaks MHL can say what it
+holds without re-hashing a terabyte.
+
+Drives are remembered by **volume identity, not mount point**. `/Volumes/SHOW_A`
+is a place a different disk can be tomorrow; two folders on one physical drive
+are one drive in the registry, the same way they are one destination to the
+format gate. The registry shows which drives are online and what each holds.
+
+An index is a snapshot and is never mistaken for a verification. Nothing in
+drive tools writes to the copy records or touches the format gate — only the
+`copies` table says a file is safe, and only a read-back with a matching
+checksum puts it there.
+
 ---
 
 ## Output layout
@@ -592,6 +624,7 @@ out of scope.
 | `storage.py` | Physical-drive identity, free-space and path-safety checks |
 | `destinations.py` | Attaching a drive to a day — the one route, used by both |
 | `presets.py` | Saved job configurations and their folders |
+| `drivetools.py` | Drive speed tests, indexing, and the drive registry |
 | `naming.py` | Resolving a token pattern into destination names |
 | `version.py`, `VERSION` | The version number, read from one file |
 | `toolpaths.py` | Finding ffmpeg and ffprobe, from a shell or from Finder |

@@ -46,6 +46,10 @@ for folder in (CARDS, DRIVE_A, DRIVE_A_ALIAS, DRIVE_B):
 os.environ["DIT_DB"] = os.path.join(RIG, "catalog.db")
 os.environ["DIT_SCAN_ROOT"] = CARDS
 os.environ["DIT_MIN_COPIES"] = "1"  # Code must still enforce the safety floor of two.
+# The rig's fake drives live beside its fake cards, so the folder picker and
+# the drive tools can reach them. /etc stays outside, which is what the
+# browse-root check is actually about.
+os.environ["DIT_BROWSE_ROOT"] = RIG
 
 
 def write_fixture(relative, seed, size=24 * 1024):
@@ -2569,6 +2573,124 @@ check("only one place decides what the stamp says",
       or "g.stamp.label" in open("app.js", encoding="utf-8").read())
 check("the gate ships its stamp so every renderer reads the same words",
       "gate[\"stamp\"]" in open("reports.py", encoding="utf-8").read())
+
+print("\n[34] drive tools")
+
+import drivetools
+
+# --- the registry, which is about drives rather than mount points --------
+drive_row, error = drivetools.register(DRIVE_A, "SHOW_A_01")
+check("a drive is registered by its identity, not its path",
+      drive_row and not error and drive_row["identity"], error)
+check("the label given is the label kept", drive_row["label"] == "SHOW_A_01")
+
+again, _ = drivetools.register(DRIVE_A)
+check("registering the same drive twice does not make a second row",
+      again["id"] == drive_row["id"]
+      and db.q1("SELECT COUNT(*) c FROM drives")["c"] == 1)
+check("and re-registering without a label keeps the one it had",
+      again["label"] == "SHOW_A_01")
+
+# DRIVE_A_ALIAS is a second folder on the same physical drive. A registry that
+# counted it as another drive would be the same lie the format gate refuses.
+alias_row, _ = drivetools.register(DRIVE_A_ALIAS)
+check("two folders on one physical drive are one drive in the registry",
+      alias_row["id"] == drive_row["id"],
+      f"{alias_row['id']} vs {drive_row['id']}")
+
+# --- the speed test ------------------------------------------------------
+job, error = drivetools.start("speed", DRIVE_A,
+                              test_bytes=drivetools.MIN_TEST_BYTES)
+check("a speed test starts", job and not error, error)
+for _ in range(200):
+    if drivetools.current() is None:
+        break
+    time.sleep(0.1)
+snapshot = drivetools.status_snapshot()
+check("the speed test finishes", snapshot["state"] == "done", snapshot["state"])
+speed = snapshot["result"]
+check("it reports a write speed and a read speed",
+      speed["write_mb_s"] > 0 and speed["read_mb_s"] > 0, json.dumps(speed))
+check("the read back matched what was written", speed["verified"], json.dumps(speed))
+check("and it says whether the cache was bypassed, rather than assuming",
+      "cache_bypassed" in speed and speed["note"], json.dumps(speed))
+if sys.platform == "darwin":
+    check("on macOS the read is measured with the page cache bypassed",
+          speed["cache_bypassed"],
+          "a read speed measured out of RAM is the lie this program exists to refuse")
+
+check("the speed test leaves nothing behind on the drive",
+      not os.path.isdir(os.path.join(DRIVE_A, drivetools.SCRATCH_DIR)),
+      os.listdir(DRIVE_A))
+check("and it did not disturb any card's verdict",
+      reports.card_status(cam_id)["safe"])
+
+# --- the index -----------------------------------------------------------
+job, error = drivetools.start("index", DRIVE_A, label="SHOW_A_01")
+check("an index starts", job and not error, error)
+for _ in range(300):
+    if drivetools.current() is None:
+        break
+    time.sleep(0.1)
+snapshot = drivetools.status_snapshot()
+check("the index finishes", snapshot["state"] == "done", snapshot["state"])
+index = snapshot["result"]
+check("it counted the files that are actually on the drive",
+      index["files"] > 0 and index["bytes"] > 0, json.dumps(
+          {k: v for k, v in index.items() if k != "manifests"}))
+
+# The point of reading manifests: a drive that has ever been offloaded can say
+# what it holds without re-hashing a terabyte.
+check("it read the manifests already sitting on the drive",
+      len(index["manifests"]) >= 1,
+      json.dumps(index["manifests"]))
+check("and a manifest tells it the day and roll",
+      any(m["roll"] for m in index["manifests"]), json.dumps(index["manifests"]))
+
+listed = drivetools.known_drives()
+this_drive = next(d for d in listed if d["id"] == drive_row["id"])
+check("the registry reports what the drive holds",
+      this_drive["indexed_files"] == index["files"]
+      and this_drive["online"], json.dumps(
+          {k: this_drive[k] for k in ("indexed_files", "online", "label")}))
+
+# Re-indexing replaces rather than accumulates.
+before = this_drive["indexed_files"]
+job, _ = drivetools.start("index", DRIVE_A)
+for _ in range(300):
+    if drivetools.current() is None:
+        break
+    time.sleep(0.1)
+check("re-indexing replaces the snapshot instead of doubling it",
+      next(d for d in drivetools.known_drives()
+           if d["id"] == drive_row["id"])["indexed_files"] == before)
+
+# An index is a snapshot and must never be mistaken for a verification.
+tools_source = open("drivetools.py", encoding="utf-8").read()
+check("drive tools never write to the copies table",
+      "INSERT INTO copies" not in tools_source
+      and "UPDATE copies" not in tools_source)
+check("drive tools never touch the format gate",
+      "card_status" not in tools_source)
+check("the only thing removed from a drive is the test's own scratch file",
+      tools_source.count("os.remove(") == 1 and "SCRATCH_DIR" in tools_source)
+
+# --- the job gate --------------------------------------------------------
+check("a drive job counts as a running job like any other",
+      "drivetools.current()" in open("app.py", encoding="utf-8").read())
+status, body = post("/api/drive/index", path="/etc")
+check("a drive outside the allowed roots is refused",
+      status == 403, body)
+status, body = post("/api/drive/speed", path=os.path.join(RIG, "not_a_drive"))
+check("a path that is not a mounted folder is refused with a reason",
+      status in (400, 409) and "error" in body, body)
+
+drivetools.forget(drive_row["id"])
+check("forgetting a drive removes it and its index",
+      db.q1("SELECT COUNT(*) c FROM drives")["c"] == 0
+      and db.q1("SELECT COUNT(*) c FROM drive_index")["c"] == 0)
+check("but the drive itself is untouched", os.path.isdir(DRIVE_A)
+      and len(os.listdir(DRIVE_A)) > 0)
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

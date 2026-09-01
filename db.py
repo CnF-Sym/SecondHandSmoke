@@ -253,6 +253,47 @@ CREATE TABLE IF NOT EXISTS jobs (
     finished_at TEXT
 );
 
+-- A physical drive this machine has met. Identity is the volume, never the
+-- mount point: /Volumes/SHOW_A is a place a different disk can be tomorrow,
+-- which is the entire reason a registry exists.
+CREATE TABLE IF NOT EXISTS drives (
+    id          INTEGER PRIMARY KEY,
+    identity    TEXT NOT NULL UNIQUE,
+    label       TEXT NOT NULL,
+    last_path   TEXT,
+    device_id   TEXT,
+    volume_uuid TEXT,
+    first_seen  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL
+);
+
+-- What was on a drive the last time it was indexed. A snapshot, and honest
+-- about being one: nothing here is evidence a file is still there or was ever
+-- verified. The copies table is what says a file is safe.
+CREATE TABLE IF NOT EXISTS drive_index (
+    id         INTEGER PRIMARY KEY,
+    drive_id   INTEGER NOT NULL REFERENCES drives(id) ON DELETE CASCADE,
+    rel_path   TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    mtime      REAL,
+    indexed_at TEXT NOT NULL
+);
+
+-- Manifests found on a drive, ours or another tool's. An MHL already lists the
+-- files and the day and roll they belong to, so a drive offloaded by anything
+-- that speaks MHL can say what it holds without re-hashing a terabyte.
+CREATE TABLE IF NOT EXISTS drive_manifests (
+    id         INTEGER PRIMARY KEY,
+    drive_id   INTEGER NOT NULL REFERENCES drives(id) ON DELETE CASCADE,
+    rel_path   TEXT NOT NULL,
+    project    TEXT,
+    day_name   TEXT,
+    roll       TEXT,
+    file_count INTEGER NOT NULL,
+    tool       TEXT,
+    indexed_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS preset_folders (
     id         INTEGER PRIMARY KEY,
     name       TEXT NOT NULL UNIQUE,
@@ -308,6 +349,9 @@ CREATE INDEX IF NOT EXISTS idx_dailies_state ON dailies(state);
 CREATE INDEX IF NOT EXISTS idx_handoff_exports_state ON handoff_exports(state);
 CREATE INDEX IF NOT EXISTS idx_preset_destinations_preset
     ON preset_destinations(preset_id);
+CREATE INDEX IF NOT EXISTS idx_drive_index_drive ON drive_index(drive_id);
+CREATE INDEX IF NOT EXISTS idx_drive_index_path ON drive_index(rel_path);
+CREATE INDEX IF NOT EXISTS idx_drive_manifests_drive ON drive_manifests(drive_id);
 """
 
 

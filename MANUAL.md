@@ -880,6 +880,10 @@ must be `application/json` and must come from the tool's own origin.
 | `GET` | `/api/day/<day>/handoff/notes` | The operator notes, rendered |
 | `POST` | `/api/day/<id>/naming` | Store the day's patterns. Body: `pattern_camera`, `pattern_sound` |
 | `GET` | `/api/day/<id>/naming/preview` | What every registered card would be called |
+| `GET` | `/api/drives` | The drive registry and what each drive holds |
+| `POST` | `/api/drive/speed` | Verified speed test. Body: `path`, optional `bytes` |
+| `POST` | `/api/drive/index` | Index a drive. Body: `path`, optional `label` |
+| `DELETE` | `/api/drive/<id>` | Forget a drive; nothing on the drive is touched |
 | `GET` | `/api/presets` | Every preset folder and its presets |
 | `POST` | `/api/preset` | Save the active day's setup. Body: `name`, `folder_id` |
 | `POST` | `/api/preset/<id>/apply` | Attach a preset's drives to the active day |
@@ -1099,6 +1103,29 @@ across a cancel and a resume, and a rename that came out differently the second
 time would copy a second file beside the first while the gate counted both.
 `{index}` is computed from the card's groups in sorted order for the same
 reason.
+
+### `drivetools.py` — speed tests, indexing and the drive registry
+
+| Function | Purpose |
+|---|---|
+| `register(path, label)` | Records a drive by volume identity, not mount point |
+| `known_drives()` | The registry, with online state and what each drive holds |
+| `read_manifest(path)` | Parses any ASC MHL 1.1 manifest — ours or another tool's |
+| `start(mode, path, ...)` | `speed` or `index`; runs through the same job gate |
+| `forget(drive_id)` | Removes a drive from the registry; touches no drive |
+
+The speed test writes a real file, fsyncs it, then reads it back with the page
+cache bypassed and checksums the result. Without the fsync the write figure is
+how fast the OS accepted the bytes; without the cache bypass the read figure
+may be memory. When bypass cannot be established the result says so rather than
+reporting a fast number. The scratch file lives in the drive's own
+`.shs-speedtest` folder and is removed afterwards — the only file this program
+ever removes from a drive.
+
+Indexing is read-only and stores a snapshot in `drive_index`, plus anything it
+learned from manifests in `drive_manifests`. Neither table is evidence a file is
+still present or was ever verified: `copies` is what says a file is safe, and
+only a read-back with a matching checksum writes to it.
 
 ### `presets.py` — saved job configurations
 

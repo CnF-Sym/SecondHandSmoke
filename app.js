@@ -573,6 +573,86 @@ async function previewNaming() {
   }).join("");
 }
 
+// Drive tools. The speed number is the point: every competitor leads with
+// MB/s and this program could not previously answer the question at all.
+function renderDrives(state) {
+  const drives = state.drives || [];
+  const box = $("driveList");
+  box.innerHTML = drives.length ? `<div class="list">${drives.map(d => {
+    const seen = d.indexed_at
+      ? `${d.indexed_files} files · ${humanBytes(d.indexed_bytes)} · indexed ${esc(d.indexed_at.slice(0, 10))}`
+      : "never indexed";
+    const rolls = (d.manifests || []).slice(0, 6)
+      .map(m => esc([m.day_name, m.roll].filter(Boolean).join(" ") || m.rel_path))
+      .join(", ");
+    return `<div class="row">
+      <span class="grow">
+        <b>${esc(d.label)}</b>
+        <span class="tag ${d.online ? "known" : ""}">${d.online ? "online" : "offline"}</span>
+        <span class="path">${seen}${rolls ? " · holds " + rolls : ""}</span>
+      </span>
+      <button class="btn ghost sm" onclick="forgetDrive(${d.id})">Forget</button>
+    </div>`;
+  }).join("")}</div>`
+    : '<p class="empty">No drives indexed yet. Index one to remember what it holds.</p>';
+
+  const job = state.job;
+  const note = $("driveResult");
+  if (job && job.job_type === "drive" && job.result && job.state === "done") {
+    const r = job.result;
+    if (job.mode === "speed") {
+      note.hidden = false;
+      note.className = r.cache_bypassed ? "note" : "note warn";
+      note.innerHTML = `<b>Write ${r.write_mb_s} MB/s · read ${r.read_mb_s} MB/s</b>
+        over ${humanBytes(r.bytes)}. ${r.verified ? "Read back and checksum-matched."
+          : "<b>The read-back did not match what was written.</b>"}
+        ${esc(r.note)}`;
+    } else {
+      note.hidden = false;
+      note.className = "note";
+      note.innerHTML = `Indexed <b>${esc(r.label || "")}</b>: ${r.files} files,
+        ${humanBytes(r.bytes)}${(r.manifests || []).length
+          ? `, ${r.manifests.length} manifest(s) read` : ""}.`;
+    }
+  }
+}
+
+function humanBytes(n) {
+  n = Number(n) || 0;
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1000 && i < units.length - 1) { n /= 1000; i += 1; }
+  return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+}
+
+async function driveSpeed() {
+  const path = $("drivePath").value.trim();
+  if (!path) return toast("Give it a drive to test.", true);
+  try {
+    await api("/api/drive/speed", { method: "POST",
+                                    body: JSON.stringify({ path }) });
+    toast("Speed test running — writing, then reading it back.");
+  } catch (err) { /* api() has already said why */ }
+  refresh();
+}
+
+async function driveIndex() {
+  const path = $("drivePath").value.trim();
+  if (!path) return toast("Give it a drive to index.", true);
+  try {
+    await api("/api/drive/index", { method: "POST", body: JSON.stringify({
+      path, label: $("driveLabel").value.trim() }) });
+    toast("Indexing — reading the drive, and any manifests already on it.");
+  } catch (err) { /* api() has already said why */ }
+  refresh();
+}
+
+async function forgetDrive(id) {
+  await api(`/api/drive/${id}`, { method: "DELETE" });
+  toast("Forgotten from the registry. Nothing on the drive was touched.");
+  refresh();
+}
+
 function renderTools(tools) {
   const box = $("toolStatus");
   if (!box) return;
@@ -1093,6 +1173,7 @@ async function refresh() {
   renderReports(s);
   renderPresets(s);
   renderNaming(s);
+  renderDrives(s);
 
   // Sync, proxies and dailies all read from verified copies, so none of them
   // can do anything until at least one card has cleared the gate.
