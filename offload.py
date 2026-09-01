@@ -153,6 +153,21 @@ def _card_source_problem(card):
     return None
 
 
+def _row_id(row):
+    """A row's id, or None.
+
+    The collision check is deliberately callable with hand-built rows that
+    carry nothing but a relative path — it is the one piece of the copy path
+    that can be exercised without a catalog behind it, and keeping it that way
+    is worth a three-line helper. A sqlite3.Row raises IndexError for a missing
+    column while a dict raises KeyError; both mean the same thing here.
+    """
+    try:
+        return row["id"]
+    except (KeyError, IndexError):
+        return None
+
+
 def _target_collision(files, dests, day, card, plan=None):
     """Refuse to start if two source files would land on one destination path.
 
@@ -172,7 +187,7 @@ def _target_collision(files, dests, day, card, plan=None):
     plan = plan or {}
     seen = {}
     for file_row in files:
-        entry = plan.get(file_row["id"])
+        entry = plan.get(_row_id(file_row))
         relative = entry["dest_rel_path"] if entry else file_row["rel_path"]
         try:
             target = dest_path_for(dests[0]["path"], day["project"], day["name"],
@@ -202,7 +217,7 @@ def _pattern_changed(files, dests, plan):
     copied.
     """
     for file_row in files:
-        entry = plan.get(file_row["id"])
+        entry = plan.get(_row_id(file_row))
         if not entry:
             continue
         for dest in dests:

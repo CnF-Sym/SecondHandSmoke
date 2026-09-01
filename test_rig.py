@@ -2384,6 +2384,15 @@ check("the day report shows what it was written as",
 check("the day report says renaming happened on the destination only",
       "The card was not touched" in rename_report)
 
+# Renaming added a plan argument to the collision check. That check is also the
+# one piece of the copy path exercisable with nothing but relative paths, and it
+# has to stay that way — section [19] calls it exactly like this.
+check("the collision check still works on rows with no catalog behind them",
+      bool(offload._target_collision(
+          [{"rel_path": os.path.join("CRACK_R01", "take1.wav")},
+           {"rel_path": "take1.wav"}],
+          collision_dests, collision_day, collision_card)))
+
 # Structural: naming decides names and nothing else.
 naming_source = open("naming.py", encoding="utf-8").read()
 check("naming never touches the database or the filesystem",
