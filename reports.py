@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 
 import db
 import handoff
+import hashing
 import sync
 import thumbnails
 import version
@@ -268,8 +269,8 @@ def write_mhl(card_id, destination_id):
     day = db.q1("SELECT * FROM days WHERE id=?", (card["day_id"],))
     dest = db.q1("SELECT * FROM destinations WHERE id=?", (destination_id,))
 
-    rows = db.q("""SELECT f.rel_path, f.size, f.mtime, f.src_hash, c.dest_path, c.state,
-                          c.updated_at
+    rows = db.q("""SELECT f.rel_path, f.size, f.mtime, f.src_hash, f.hash_algo,
+                          c.dest_path, c.state, c.updated_at
                    FROM files f JOIN copies c ON c.file_id = f.id
                    WHERE f.card_id=? AND c.destination_id=? AND c.state='verified'
                    ORDER BY f.rel_path""", (card_id, destination_id))
@@ -281,6 +282,15 @@ def write_mhl(card_id, destination_id):
         return None
     skipped = db.q("SELECT rel_path, size FROM files WHERE card_id=? AND "
                    "COALESCE(excluded,0)=1 ORDER BY rel_path", (card_id,))
+
+    # Every hash in one manifest has to be the same kind of thing. The offload
+    # path already refuses to change algorithm on a half-copied card, so this
+    # is a belt-and-braces refusal rather than an expected outcome — but a
+    # manifest with two kinds of digest under two element names is not one
+    # anybody should be handed.
+    algos = {hashing.normalise(r["hash_algo"]) for r in rows}
+    if len(algos) > 1:
+        return None
 
     root = os.path.join(dest["path"], day["project"], day["name"])
     os.makedirs(root, exist_ok=True)
@@ -329,7 +339,8 @@ def write_mhl(card_id, destination_id):
             f'    <file>{esc(rel)}</file>',
             f'    <size>{r["size"]}</size>',
             f'    <lastmodificationdate>{mod}</lastmodificationdate>',
-            f'    <xxhash64be>{esc(r["src_hash"])}</xxhash64be>',
+            f'    <{hashing.mhl_element(r["hash_algo"])}>{esc(r["src_hash"])}'
+            f'</{hashing.mhl_element(r["hash_algo"])}>',
             f'    <hashdate>{esc(r["updated_at"])}</hashdate>',
             '  </hash>',
         ]

@@ -40,6 +40,7 @@ import xxhash
 
 import cards
 import db
+import hashing
 import media
 import naming
 import storage
@@ -70,8 +71,13 @@ def _open_uncached(path, mode="rb", require_uncached=False):
     return f
 
 
-def hash_file(path, progress=None, require_uncached=False):
-    h = xxhash.xxh64()
+def hash_file(path, progress=None, require_uncached=False, algo=None):
+    """Checksum a file with the page cache bypassed.
+
+    `algo` defaults to xxHash64, which is what every internal check in this
+    program uses. Media hashing passes the shoot day's chosen algorithm.
+    """
+    h = hashing.new(algo or hashing.DEFAULT)
     done = 0
     with _open_uncached(path, require_uncached=require_uncached) as f:
         while True:
@@ -105,6 +111,39 @@ def dest_path_for(dest_root, project, day_name, card, rel_path):
     if os.path.commonpath((root, target)) != root:
         raise ValueError("Project, day or roll would write outside the destination")
     return target
+
+
+def algo_for(day):
+    """The checksum this shoot day uses for media.
+
+    A day, not a card and not a global preference: a manifest covers a day's
+    worth of files and every hash in it has to be the same kind of thing.
+    """
+    try:
+        return hashing.normalise(day["hash_algo"])
+    except (IndexError, KeyError):
+        return hashing.DEFAULT
+
+
+def _algo_changed(files, dests, algo):
+    """Refuse to resume a card under a different checksum than it started with.
+
+    Half a card hashed one way and half the other is not a resumable state, and
+    it is not a manifest anyone can write. The already-verified copies keep
+    their digests; a new run would produce a different kind of digest for the
+    rest and have nothing to compare either against.
+    """
+    for file_row in files:
+        stored = file_row["hash_algo"] if "hash_algo" in file_row.keys() else None
+        if not stored or hashing.normalise(stored) == algo:
+            continue
+        if db.q1("SELECT 1 FROM copies WHERE file_id=? AND "
+                 "state IN ('copied','verified') LIMIT 1", (file_row["id"],)):
+            return (f"This card was already copied using "
+                    f"{hashing.label(stored)}, and the shoot day is now set to "
+                    f"{hashing.label(algo)}. Put the checksum back, or start "
+                    f"this card again on a clean destination folder.")
+    return None
 
 
 def pattern_for(day, kind):
@@ -323,6 +362,9 @@ def preflight(card_id, mode, min_copies):
         changed = _pattern_changed(files, dests, plan)
         if changed:
             return changed
+        algo_problem = _algo_changed(files, dests, algo_for(day))
+        if algo_problem:
+            return algo_problem
         for dest, current in checked:
             required = 0
             for file_row in files:
@@ -363,6 +405,7 @@ class Job:
         self.errors = []
         self.warnings = []
         self.plan = {}
+        self.algo = hashing.DEFAULT
         self.cancel = threading.Event()
         self.job_row = None
         self.started_epoch = None
@@ -450,6 +493,10 @@ class Job:
         if not files:
             raise RuntimeError("Every file on this card matches the exclude "
                                "filter. Nothing would be copied.")
+        self.algo = algo_for(day)
+        algo_problem = _algo_changed(files, dests, self.algo)
+        if algo_problem:
+            raise RuntimeError(algo_problem)
         # One plan for the whole card, computed once. Every destination path
         # below comes from it, so a resumed job cannot land somewhere else.
         plan = name_plan(card, day)
@@ -555,7 +602,8 @@ class Job:
                 src_hash = self._copy(src, f, needs_copy, day, card)
                 if src_hash is None:
                     continue
-                db.ex("UPDATE files SET src_hash=? WHERE id=?", (src_hash, f["id"]))
+                db.ex("UPDATE files SET src_hash=?, hash_algo=? WHERE id=?",
+                      (src_hash, self.algo, f["id"]))
 
             self.phase = "Verifying"
             for d, dp in targets:
@@ -597,7 +645,7 @@ class Job:
         """Single read of the source, fanned out to every destination, hashing
         as we go. Writes go to a .partial file that is only renamed into place
         once the whole file is down and fsynced."""
-        h = xxhash.xxh64()
+        h = hashing.new(self.algo)
         handles = []
         try:
             for d, dp in targets:
@@ -681,7 +729,8 @@ class Job:
             if size != f["size"]:
                 raise ValueError(f"size mismatch: {size} on disk vs {f['size']} on card")
             got, _ = hash_file(
-                dest_path, progress=self._tick, require_uncached=(sys.platform == "darwin")
+                dest_path, progress=self._tick,
+                require_uncached=(sys.platform == "darwin"), algo=self.algo,
             )
             if got != src_hash:
                 raise ValueError(f"checksum mismatch: {got} vs {src_hash}")

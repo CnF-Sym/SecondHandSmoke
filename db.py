@@ -444,6 +444,11 @@ def init():
     # written when an offload decides to skip it, so a filter changed
     # afterwards cannot retroactively rewrite what happened on a shoot day.
     _add_column("files", "excluded", "INTEGER NOT NULL DEFAULT 0")
+    # Which checksum the media was hashed with. NULL means the rows predate
+    # the setting, and those were hashed with xxHash64.
+    _add_column("files", "hash_algo", "TEXT")
+    _add_column("days", "hash_algo", "TEXT")
+    _add_column("presets", "hash_algo", "TEXT")
 
 
 def _add_column(table, column, declaration):

@@ -495,6 +495,35 @@ async function applyPreset(id) {
 // Naming. {original} is the default, so nothing is renamed unless someone asks
 // for it, and the preview exists because a pattern nobody looked at is a
 // pattern nobody understood.
+// The checksum belongs to the shoot day, because a manifest covers a day and
+// every hash in it has to be the same kind of thing.
+function renderChecksum(state) {
+  const checksum = state.checksum || {};
+  const select = $("checksumChoice");
+  const choices = checksum.choices || [];
+  const signature = choices.map(c => c.id).join(",");
+  if (select.dataset.signature !== signature) {
+    select.dataset.signature = signature;
+    select.innerHTML = choices.map(c =>
+      `<option value="${esc(c.id)}">${esc(c.label)}</option>`).join("");
+  }
+  if (document.activeElement !== select) select.value = checksum.current || "xxh64";
+  const chosen = choices.find(c => c.id === (checksum.current || "xxh64"));
+  $("checksumNote").textContent = chosen
+    ? `${chosen.note} Written into the manifest as <${chosen.mhl_element}>.`
+    : "";
+}
+
+async function saveChecksum() {
+  if (!activeDayId) return toast("Start a shoot day first.", true);
+  try {
+    await api(`/api/day/${activeDayId}/checksum`, { method: "POST",
+      body: JSON.stringify({ hash_algo: $("checksumChoice").value }) });
+    toast("Checksum saved for this day.");
+  } catch (err) { /* api() has already said why, including why it was refused */ }
+  refresh();
+}
+
 function renderNaming(state) {
   const naming = state.naming || {};
   if (document.activeElement !== $("patternCamera")) {
@@ -1173,6 +1202,7 @@ async function refresh() {
   renderReports(s);
   renderPresets(s);
   renderNaming(s);
+  renderChecksum(s);
   renderDrives(s);
 
   // Sync, proxies and dailies all read from verified copies, so none of them

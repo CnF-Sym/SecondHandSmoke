@@ -37,6 +37,7 @@ import db
 import destinations
 import drivetools
 import handoff
+import hashing
 import media
 import naming
 import offload
@@ -735,6 +736,32 @@ def forget_drive(drive_id):
     return jsonify(ok=True)
 
 
+@app.post("/api/day/<int:day_id>/checksum")
+def set_checksum(day_id):
+    """Choose the checksum this shoot day's media is hashed with.
+
+    Refused for a card that is already part-copied, for the same reason a
+    naming pattern is: half a card hashed one way and half the other is not a
+    resumable state, and it is not a manifest anyone can write.
+    """
+    if not db.q1("SELECT id FROM days WHERE id=?", (day_id,)):
+        return jsonify(error="Unknown shoot day"), 404
+    body = request.get_json(silent=True) or {}
+    algo = (body.get("hash_algo") or "").strip().lower()
+    if not hashing.is_known(algo):
+        return jsonify(error=f"Unknown checksum. Available: "
+                             f"{', '.join(hashing.ALGORITHMS)}"), 400
+
+    for card in db.q("SELECT * FROM cards WHERE day_id=?", (day_id,)):
+        files = db.q("SELECT * FROM files WHERE card_id=?", (card["id"],))
+        problem = offload._algo_changed(files, [], algo)
+        if problem:
+            return jsonify(error=problem), 400
+
+    db.ex("UPDATE days SET hash_algo=? WHERE id=?", (algo, day_id))
+    return jsonify(ok=True, hash_algo=algo)
+
+
 @app.post("/api/day/<int:day_id>/naming")
 def set_naming(day_id):
     """Store this day's naming patterns.
@@ -970,6 +997,10 @@ def state():
                      "logo": db.setting(pdfreport.SETTING_LOGO) or ""},
         "presets": presets.list_all(),
         "drives": drivetools.known_drives(),
+        "checksum": {
+            "current": hashing.normalise(day["hash_algo"] if day else None),
+            "choices": hashing.choices(),
+        },
         "naming": {
             "tokens": list(naming.TOKENS),
             "default": naming.DEFAULT_PATTERN,

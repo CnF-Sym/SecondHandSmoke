@@ -2726,5 +2726,108 @@ else:
     check("the README's count of checks and sections is stated in a checkable way",
           False, "the phrasing changed; update this test with it")
 
+print("\n[36] the checksum is a choice, and the manifest never lies about it")
+
+import hashing
+
+check("xxHash64 is the default, so nothing changes for anyone who ignores this",
+      hashing.DEFAULT == "xxh64" and hashing.normalise(None) == "xxh64")
+check("rows written before this setting existed are read as xxHash64",
+      hashing.normalise("") == "xxh64" and hashing.normalise("nonsense") == "xxh64")
+
+# Every algorithm offered must have an element the MHL schema actually defines.
+# One that does not would have to be written under a neighbouring name, which
+# is a manifest that lies about what is in it.
+mhl_elements = {"md5", "sha1", "xxhash", "xxhash64", "xxhash64be", "null"}
+check("every checksum offered can be named truthfully in an MHL",
+      all(spec["mhl_element"] in mhl_elements
+          for spec in hashing.ALGORITHMS.values()),
+      ", ".join(f"{k}:{v['mhl_element']}" for k, v in hashing.ALGORITHMS.items()))
+
+sample = os.path.join(RIG, "checksum_sample.bin")
+with open(sample, "wb") as handle:
+    handle.write(b"second hand smoke" * 1024)
+digests = {algo: offload.hash_file(sample, algo=algo)[0] for algo in hashing.ALGORITHMS}
+check("each algorithm produces a different digest of the same bytes",
+      len(set(digests.values())) == len(digests), json.dumps(digests))
+check("and each is stable across two reads",
+      all(offload.hash_file(sample, algo=algo)[0] == digest
+          for algo, digest in digests.items()))
+check("the default digest is unchanged from what this program has always written",
+      digests["xxh64"] == offload.hash_file(sample)[0])
+
+# --- through a real offload ---------------------------------------------
+write_fixture("H001_CARD/CLIPS/H001C001.MXF", 240, 8 * 1024)
+write_fixture("H001_CARD/CLIPS/H001C002.MXF", 241, 8 * 1024)
+
+status, body = post("/api/day", project="PROJECT_01", name="DAY_MD5",
+                    shoot_date="2026-01-21")
+md5_day = body["day_id"]
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+
+status, body = post(f"/api/day/{md5_day}/checksum", hash_algo="md5")
+check("a shoot day can be set to another checksum", status == 200, body)
+status, body = post(f"/api/day/{md5_day}/checksum", hash_algo="crc32")
+check("an algorithm this program cannot name in a manifest is refused",
+      status == 400, body)
+
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "H001_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+md5_card = body["card_id"]
+
+status, body = post(f"/api/offload/{md5_card}")
+check("an offload under a different checksum starts", status == 200, body)
+wait_job()
+
+gate = reports.card_status(md5_card)
+check("the card clears, verified with the checksum that was chosen",
+      gate["safe"], gate["reason"])
+stored = db.q("SELECT src_hash, hash_algo FROM files WHERE card_id=?", (md5_card,))
+check("every file records which checksum it was hashed with",
+      all(row["hash_algo"] == "md5" for row in stored),
+      json.dumps([dict(r) for r in stored]))
+check("and the digests really are MD5",
+      all(len(row["src_hash"]) == 32 for row in stored))
+
+md5_dest = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primary'",
+                 (md5_day,))
+md5_mhl = reports.write_mhl(md5_card, md5_dest["id"])
+check("a manifest is written", bool(md5_mhl))
+md5_body = open(md5_mhl, encoding="utf-8").read()
+check("the manifest names the digest it is actually carrying",
+      "<md5>" in md5_body and "xxhash64be" not in md5_body)
+check("the manifest is still well-formed XML",
+      ET.fromstring(md5_body) is not None)
+check("and every hash element is one the MHL schema defines",
+      all(child.tag in ("file", "size", "creationdate", "lastmodificationdate",
+                        "md5", "sha1", "xxhash", "xxhash64", "xxhash64be",
+                        "null", "hashdate")
+          for hash_el in ET.fromstring(md5_body).findall("hash")
+          for child in hash_el))
+
+# Half a card hashed one way and half the other is not a resumable state.
+status, body = post(f"/api/day/{md5_day}/checksum", hash_algo="sha1")
+check("changing the checksum on a card that is already copied is refused",
+      status == 400 and "already copied" in body.get("error", ""), body)
+check("and the day keeps the checksum it was actually using",
+      db.q1("SELECT hash_algo FROM days WHERE id=?", (md5_day,))["hash_algo"] == "md5")
+
+db.ex("UPDATE days SET hash_algo=? WHERE id=?", ("sha1", md5_day))
+refusal = offload.preflight(md5_card, "offload", 2)
+check("the offload refuses too, in case the setting was changed another way",
+      refusal and "already copied" in refusal, refusal)
+db.ex("UPDATE days SET hash_algo=? WHERE id=?", ("md5", md5_day))
+check("putting it back makes the card workable again",
+      offload.preflight(md5_card, "offload", 2) is None)
+
+# The internal checks are deliberately not configurable.
+for module in ("proxies.py", "handoff.py", "thumbnails.py"):
+    source = open(module, encoding="utf-8").read()
+    check(f"{module} does not take its checksum from the day's setting",
+          "algo_for(" not in source and "hash_algo" not in source)
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

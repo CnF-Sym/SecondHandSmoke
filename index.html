@@ -44,6 +44,11 @@
         <input id="dayDate" type="date">
       </div>
       <button class="btn" onclick="createDay()">Start day</button>
+      <div class="field-row">
+        <label class="field-label" for="checksumChoice">Checksum</label>
+        <select id="checksumChoice" onchange="saveChecksum()"></select>
+      </div>
+      <p class="note" id="checksumNote"></p>
     </section>
 
     <section class="panel" id="presetPanel">

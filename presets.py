@@ -43,6 +43,7 @@ import shutil
 
 import db
 import destinations
+import hashing
 import naming
 import pdfreport
 import storage
@@ -170,9 +171,10 @@ def save_from_day(day_id, name, folder_id=UNGROUPED, production=None, logo=None)
                           (folder_id, name))["id"]
 
     db.ex("UPDATE presets SET pattern_camera=?, pattern_sound=?, "
-          "filter_camera=?, filter_sound=? WHERE id=?",
+          "filter_camera=?, filter_sound=?, hash_algo=? WHERE id=?",
           (day["pattern_camera"] or "", day["pattern_sound"] or "",
-           day["filter_camera"] or "", day["filter_sound"] or "", preset_id))
+           day["filter_camera"] or "", day["filter_sound"] or "",
+           day["hash_algo"] or "", preset_id))
 
     # Branding travels with the preset, including its own copy of the logo.
     stored_logo = _copy_logo(logo or pdfreport.branding()["logo"],
@@ -280,6 +282,24 @@ def apply(preset_id, day_id):
                 f"This preset filters {column.replace('filter_', '')} cards: "
                 f"{naming.describe_filters(value)} Files it skips are listed on "
                 f"the card and the card can never read plain SAFE TO FORMAT.")
+
+    # The checksum comes across only if nothing on this day has been copied
+    # yet. A preset is not a way around the rule that a card keeps the
+    # algorithm it started with.
+    wanted = hashing.normalise(preset["hash_algo"]) if preset["hash_algo"] else None
+    if wanted and wanted != hashing.normalise(day["hash_algo"]):
+        copied = db.q1("""SELECT 1 FROM copies c JOIN files f ON f.id=c.file_id
+                          JOIN cards k ON k.id=f.card_id
+                          WHERE k.day_id=? AND c.state IN ('copied','verified')
+                          LIMIT 1""", (day_id,))
+        if copied:
+            result["warnings"].append(
+                f"This preset uses {hashing.label(wanted)} checksums, but this "
+                f"day has already copied files. The checksum was left as "
+                f"{hashing.label(day['hash_algo'])}.")
+        else:
+            db.ex("UPDATE days SET hash_algo=? WHERE id=?", (wanted, day_id))
+            result["hash_algo"] = wanted
 
     result["project"] = preset["project"] or ""
     if preset["production_name"] is not None:
