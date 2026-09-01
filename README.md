@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **400 checks across 35 sections**. The ones that matter most:
+More than **400 checks across 36 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -292,6 +292,35 @@ there, or refused with the reason. And if the drive currently at a familiar
 path is not the physical drive the preset was saved with, it is attached and
 you are told — drives get rotated, cloned and relabelled, but "SHOW_A already
 has Monday on it" quietly ceasing to be true is worth a sentence.
+
+## Checksums
+
+xxHash64 by default — fast enough to keep up with a card reader, which matters
+because a verification nobody has time to run is a verification nobody runs. It
+is also what almost every offload tool writes, so manifests interchange cleanly.
+
+Some archives and delivery specs mandate a particular algorithm by name, so the
+checksum is a per-day setting: **xxHash64**, **MD5** or **SHA-1**. Per day
+rather than global, because a manifest covers a day's worth of files and every
+hash in it has to be the same kind of thing.
+
+Two rules:
+
+- **The manifest never mislabels a digest.** The offered list is the
+  intersection of what this program can compute and what the ASC MHL 1.1 schema
+  can truthfully name. An algorithm written under a neighbouring element name
+  would be a manifest that lies about its own contents, which is worse than no
+  manifest. The list grows when the manifest format does, not before.
+- **A card keeps the checksum it started with.** Changing it on a day that has
+  already copied files is refused — half a card hashed one way and half the
+  other is not a resumable state, and nobody can write a manifest for it.
+
+Proxies, review dailies and thumbnails are always checked with xxHash64
+whatever this is set to. Those are internal integrity checks on files this
+program made; no archive policy is about them, and making them configurable
+would only add a way for two things to disagree.
+
+---
 
 ## Naming
 
@@ -666,6 +695,7 @@ out of scope.
 | `presets.py` | Saved job configurations and their folders |
 | `drivetools.py` | Drive speed tests, indexing, and the drive registry |
 | `naming.py` | Resolving a token pattern into destination names |
+| `hashing.py` | Which checksum, and what a manifest may call it |
 | `version.py`, `VERSION` | The version number, read from one file |
 | `toolpaths.py` | Finding ffmpeg and ffprobe, from a shell or from Finder |
 | `server_main.py` | Server entry point used inside the macOS application |

@@ -878,6 +878,7 @@ must be `application/json` and must come from the tool's own origin.
 | `POST` | `/api/day/<day>/waveform` | Run the waveform fallback |
 | `POST` | `/api/day/<day>/handoff?rebuild=1` | Build the editorial handoff |
 | `GET` | `/api/day/<day>/handoff/notes` | The operator notes, rendered |
+| `POST` | `/api/day/<id>/checksum` | Set the day's checksum. Body: `hash_algo` |
 | `POST` | `/api/day/<id>/naming` | Store the day's patterns. Body: `pattern_camera`, `pattern_sound` |
 | `GET` | `/api/day/<id>/naming/preview` | What every registered card would be called |
 | `GET` | `/api/drives` | The drive registry and what each drive holds |
@@ -1081,6 +1082,29 @@ One function, because there is more than one way to ask: typed into the
 interface, or applied from a preset. A preset that could attach a drive by a
 slacker set of rules than the interface does would be a hole straight through
 the two-drive requirement.
+
+### `hashing.py` — checksum choice
+
+| Function | Purpose |
+|---|---|
+| `ALGORITHMS` | The offered set: what we can compute *and* an MHL can name |
+| `normalise(algo)` | Falls back to xxHash64, what older rows were hashed with |
+| `mhl_element(algo)` | The element name the manifest must use for this digest |
+| `choices()` | The list the interface offers, with notes |
+| `new(algo)` | A fresh hasher |
+
+The offered list is deliberately the intersection of what this program can
+compute and what the ASC MHL 1.1 schema can truthfully name. An algorithm
+written into a manifest under a neighbouring element name is a manifest that
+lies about its own contents, and that is worse than not offering the algorithm.
+The list grows when the manifest format does.
+
+The setting belongs to the shoot day, and `offload._algo_changed()` refuses to
+change it once a card has copies. `reports.write_mhl()` refuses to write a
+manifest covering more than one algorithm at all, as a second line of defence.
+
+Proxies, review dailies and thumbnails always use xxHash64: internal integrity
+checks on files this program made.
 
 ### `naming.py` — token patterns
 
