@@ -460,11 +460,24 @@ for label, drive in (("DRIVE_A", DRIVE_A), ("DRIVE_B", DRIVE_B)):
 
 print("\n[6] complete manifest + no-op resume")
 s, j = post(f"/api/card/{cam_id}/manifest")
-check("MHL written to both drives", s == 200 and len(j["paths"]) == 2, j)
-with open(j["paths"][0], encoding="utf-8") as fh:
+# Two drives, and both manifest formats on each: the 1.1 sidecar and the 2.0
+# ascmhl folder. Section [37] is where the 2.0 side is picked apart.
+check("both manifest formats written to both drives",
+      s == 200 and len(j["paths"]) == 4, j)
+legacy_paths = [path for path in j["paths"] if "ascmhl" not in path]
+modern_paths = [path for path in j["paths"] if "ascmhl" in path]
+check("one ASC MHL 1.1 file per drive", len(legacy_paths) == 2, legacy_paths)
+check("one ASC MHL 2.0 manifest per drive", len(modern_paths) == 2, modern_paths)
+check("and nothing was warned about on a first write", not j.get("warnings"),
+      j.get("warnings"))
+with open(legacy_paths[0], encoding="utf-8") as fh:
     mhl = fh.read()
 check("MHL contains all hashes", mhl.count("<hash>") == 8)
-check("MHL is well-formed XML", ET.parse(j["paths"][0]).getroot().tag == "hashlist")
+check("MHL is well-formed XML",
+      ET.parse(legacy_paths[0]).getroot().tag == "hashlist")
+check("and the 2.0 manifest covers the same eight files",
+      len(ET.parse(modern_paths[0]).getroot()
+          .findall("{urn:ASC:MHL:v2.0}hashes/{urn:ASC:MHL:v2.0}hash")) == 8)
 before = db.q1("SELECT COUNT(*) c FROM copies WHERE state='verified'")["c"]
 s, j = post(f"/api/offload/{cam_id}")
 wait_job()
@@ -2737,12 +2750,25 @@ check("rows written before this setting existed are read as xxHash64",
 
 # Every algorithm offered must have an element the MHL schema actually defines.
 # One that does not would have to be written under a neighbouring name, which
-# is a manifest that lies about what is in it.
+# is a manifest that lies about what is in it. 1.1 names five digests and 2.0
+# names six, so an algorithm may legitimately have no 1.1 name — but then the
+# rule is that no 1.1 manifest gets written for it at all, which section [37]
+# proves. What it may never have is a name from a schema that does not use it.
 mhl_elements = {"md5", "sha1", "xxhash", "xxhash64", "xxhash64be", "null"}
-check("every checksum offered can be named truthfully in an MHL",
-      all(spec["mhl_element"] in mhl_elements
+mhl2_elements = {"md5", "sha1", "xxh64", "xxh3", "xxh128", "c4"}
+check("every checksum offered can be named truthfully in an ASC MHL 1.1, "
+      "or admits it cannot be named there at all",
+      all(spec["mhl_element"] in mhl_elements or spec["mhl_element"] is None
           for spec in hashing.ALGORITHMS.values()),
       ", ".join(f"{k}:{v['mhl_element']}" for k, v in hashing.ALGORITHMS.items()))
+check("and every one of them has a real ASC MHL 2.0 element name",
+      all(spec["mhl2_element"] in mhl2_elements
+          for spec in hashing.ALGORITHMS.values()),
+      ", ".join(f"{k}:{v['mhl2_element']}" for k, v in hashing.ALGORITHMS.items()))
+check("the interface can say which manifests a choice will produce",
+      all(choice["manifests"] and "ASC MHL 2.0" in choice["manifests"]
+          for choice in hashing.choices()),
+      json.dumps({c["id"]: c["manifests"] for c in hashing.choices()}))
 
 sample = os.path.join(RIG, "checksum_sample.bin")
 with open(sample, "wb") as handle:
@@ -2828,6 +2854,197 @@ for module in ("proxies.py", "handoff.py", "thumbnails.py"):
     source = open(module, encoding="utf-8").read()
     check(f"{module} does not take its checksum from the day's setting",
           "algo_for(" not in source and "hash_algo" not in source)
+
+print("\n[37] ASC MHL 2.0 — the ascmhl folder, and the chain that covers it")
+
+import mhl2
+
+V2 = "{urn:ASC:MHL:v2.0}"
+CHAIN_NS = "{urn:ASC:MHL:DIRECTORY:v2.0}"
+
+# --- the C4 ID ------------------------------------------------------------
+# The chain file identifies every manifest by its C4 ID, so a wrong C4 encoder
+# makes an unreadable chain. These vectors were produced by the reference
+# implementation (Pomfort's `ascmhl` package) and are pinned here so that a
+# future edit to the encoder cannot quietly change what we write.
+check("the C4 ID of empty input matches the reference implementation",
+      hashing.new("c4").hexdigest() ==
+      "c459dsjfscH38cYeXXYogktxf4Cd9ibshE3BHUo6a58hBXmRQdZrAkZzsWcbWtDg5oQ"
+      "stpDuni4Hirj75GEmTc1sFT",
+      hashing.new("c4").hexdigest())
+c4_hello = hashing.new("c4")
+c4_hello.update(b"hello world")
+check("and of 'hello world'",
+      c4_hello.hexdigest() ==
+      "c41yP4cqy7jmaRDzC2bmcGNZkuQb3VdftMk6YH7ynQ2Qw4zktKsyA9fk52xghNQNAdkp"
+      "F9iFmFkKh2bNVG4kDWhsok",
+      c4_hello.hexdigest())
+check("every C4 ID is 90 characters and starts with c4",
+      all(len(d) == 90 and d.startswith("c4")
+          for d in (hashing.new("c4").hexdigest(), c4_hello.hexdigest())))
+
+# --- an offload under an algorithm 1.1 cannot name ------------------------
+write_fixture("I001_CARD/CLIPS/I001C001.MXF", 250, 8 * 1024)
+write_fixture("I001_CARD/CLIPS/I001C002.MXF", 251, 8 * 1024)
+
+status, body = post("/api/day", project="PROJECT_01", name="DAY_MHL2",
+                    shoot_date="2026-01-22")
+v2_day = body["day_id"]
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+
+status, body = post(f"/api/day/{v2_day}/checksum", hash_algo="xxh128")
+check("a shoot day can be set to a checksum only ASC MHL 2.0 can name",
+      status == 200, body)
+
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "I001_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+v2_card = body["card_id"]
+status, body = post(f"/api/offload/{v2_card}")
+check("the offload runs", status == 200, body)
+wait_job()
+
+gate = reports.card_status(v2_card)
+check("the card clears", gate["safe"], gate["reason"])
+check("and the digests really are 128-bit",
+      all(len(row["src_hash"]) == 32 for row in
+          db.q("SELECT src_hash FROM files WHERE card_id=?", (v2_card,))))
+
+v2_dest = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primary'",
+                (v2_day,))
+written = reports.write_manifests(v2_card, v2_dest["id"])
+check("a manifest is written", bool(written["paths"]), json.dumps(written))
+check("nothing is warned about on a fresh folder", not written["warnings"],
+      json.dumps(written["warnings"]))
+check("and no ASC MHL 1.1 file is written for a digest 1.1 cannot name",
+      not any(p.endswith(".mhl") and "ascmhl" not in p for p in written["paths"]),
+      json.dumps(written["paths"]))
+check("the 1.1 renderer refuses on its own too, however it is called",
+      reports.write_mhl(v2_card, v2_dest["id"]) is None)
+
+v2_path = written["paths"][-1]
+v2_root = os.path.dirname(os.path.dirname(v2_path))
+check("the manifest is inside an ascmhl folder at the top of the day folder",
+      os.path.basename(os.path.dirname(v2_path)) == "ascmhl", v2_path)
+check("and is named <number>_<roll>_<date>_<time>Z.mhl",
+      _re.match(r"^\d{4}_.+_\d{4}-\d{2}-\d{2}_\d{6}Z\.mhl$",
+                os.path.basename(v2_path)) is not None,
+      os.path.basename(v2_path))
+
+v2_tree = ET.parse(v2_path).getroot()
+check("it is a v2.0 hashlist in the ASC namespace",
+      v2_tree.tag == V2 + "hashlist" and v2_tree.get("version") == "2.0",
+      v2_tree.tag)
+check("it names the tool and the version that wrote it",
+      v2_tree.find(f"{V2}creatorinfo/{V2}tool").get("version") == version.VERSION)
+check("it says the media was transferred, not hashed in place",
+      v2_tree.findtext(f"{V2}processinfo/{V2}process") == "transfer")
+check("it claims no root hash, because the day folder is still being written to",
+      v2_tree.find(f"{V2}processinfo/{V2}roothash") is None)
+
+v2_hashes = v2_tree.findall(f"{V2}hashes/{V2}hash")
+check("every copied file is in it",
+      len(v2_hashes) == db.q1("SELECT COUNT(*) c FROM files WHERE card_id=?",
+                              (v2_card,))["c"],
+      f"{len(v2_hashes)} entries")
+check("each entry carries the digest under its own algorithm's element name",
+      all(h.find(V2 + "xxh128") is not None for h in v2_hashes))
+check("and says the hash was taken off the card, not off the destination",
+      all(h.find(V2 + "xxh128").get("action") == "original" for h in v2_hashes))
+check("each path carries its size and modification date",
+      all(h.find(V2 + "path").get("size")
+          and h.find(V2 + "path").get("lastmodificationdate")
+          for h in v2_hashes))
+check("paths are relative to the folder the ascmhl folder sits in, "
+      "and resolve to files that are really there",
+      all(os.path.isfile(os.path.join(v2_root, h.find(V2 + "path").text))
+          for h in v2_hashes),
+      json.dumps([h.find(V2 + "path").text for h in v2_hashes]))
+check("every element in a hash entry is one the 2.0 schema defines",
+      all(child.tag.split("}")[-1] in
+          ("path", "previousPath", "metadata", "md5", "sha1",
+           "xxh64", "xxh3", "xxh128", "c4")
+          for h in v2_hashes for child in h))
+
+# --- the chain ------------------------------------------------------------
+chain_path = os.path.join(os.path.dirname(v2_path), "ascmhl_chain.xml")
+check("a chain file sits beside the manifest", os.path.isfile(chain_path))
+chain = ET.parse(chain_path).getroot()
+generations = chain.findall(CHAIN_NS + "hashlist")
+check("it records this manifest, by name", len(generations) == 1
+      and generations[0].findtext(CHAIN_NS + "path") == os.path.basename(v2_path),
+      ET.tostring(chain, encoding="unicode"))
+check("and by the C4 ID of the file as it actually landed on disk",
+      generations[0].findtext(CHAIN_NS + "c4") == mhl2.c4_of_file(v2_path))
+
+# --- writing it twice -----------------------------------------------------
+again = reports.write_manifests(v2_card, v2_dest["id"])
+check("writing the manifest again adds nothing, because nothing changed",
+      again["paths"] == written["paths"], json.dumps(again["paths"]))
+check("so the chain still has exactly one generation",
+      len(ET.parse(chain_path).getroot().findall(CHAIN_NS + "hashlist")) == 1)
+
+# --- a manifest that was altered after the fact ---------------------------
+# This is the whole point of a chain: catching a manifest that changed since
+# it was written. Nothing is repaired and nothing is deleted — it is reported.
+with open(v2_path, "a", encoding="utf-8") as handle:
+    handle.write("<!-- not us -->\n")
+db.ex("UPDATE files SET src_hash=? WHERE card_id=? AND rel_path LIKE '%I001C001%'",
+      ("f" * 32, v2_card))
+tampered = reports.write_manifests(v2_card, v2_dest["id"])
+check("a manifest that no longer matches the chain is reported",
+      any("no longer matches" in w for w in tampered["warnings"]),
+      json.dumps(tampered["warnings"]))
+check("the altered manifest is left exactly where it is",
+      os.path.isfile(v2_path)
+      and open(v2_path, encoding="utf-8").read().endswith("<!-- not us -->\n"))
+check("and the new state is recorded as a second generation, not a rewrite",
+      len(ET.parse(chain_path).getroot().findall(CHAIN_NS + "hashlist")) == 2)
+
+# --- renaming, which 2.0 can say out loud --------------------------------
+v2_renamed = [h for h in v2_hashes if h.find(V2 + "previousPath") is not None]
+check("nothing claims a previous name when nothing was renamed",
+      not v2_renamed, json.dumps([h.find(V2 + "path").text for h in v2_renamed]))
+
+# --- the reference layout, read back by our own drive indexer ------------
+read_back = drivetools.read_manifest(v2_path)
+check("the drive indexer can read an ASC MHL 2.0 manifest",
+      read_back is not None and read_back["file_count"] == len(v2_hashes),
+      json.dumps(read_back and {k: v for k, v in read_back.items() if k != "files"}))
+check("and gets the sizes and digests out of it, not just the names",
+      read_back and all(f["size"] and f["hash"] for f in read_back["files"]),
+      json.dumps(read_back and read_back["files"]))
+project_guess, day_guess, roll_guess = \
+    drivetools._day_from_manifest_path(DRIVE_A, v2_path)
+check("and works out the day and roll from where a 2.0 manifest sits",
+      (project_guess, day_guess) == ("PROJECT_01", "DAY_MHL2")
+      and bool(roll_guess) and _re.match(r"^\d{4}_", roll_guess) is None
+      and not roll_guess.endswith("Z"),
+      f"{project_guess} / {day_guess} / {roll_guess}")
+
+# --- and 1.1 is still written when 1.1 can say it ------------------------
+both = reports.write_manifests(md5_card, md5_dest["id"])
+check("a day on MD5 gets both manifest formats, from the same facts",
+      len(both["paths"]) == 2
+      and any("ascmhl" in p for p in both["paths"])
+      and any("ascmhl" not in p for p in both["paths"]),
+      json.dumps(both["paths"]))
+legacy_path = next(p for p in both["paths"] if "ascmhl" not in p)
+modern_path = next(p for p in both["paths"] if "ascmhl" in p)
+legacy = ET.parse(legacy_path).getroot()
+modern = ET.parse(modern_path).getroot()
+legacy_facts = sorted((h.findtext("file"), h.findtext("size"), h.findtext("md5"))
+                      for h in legacy.findall("hash"))
+modern_facts = sorted((h.find(V2 + "path").text,
+                       h.find(V2 + "path").get("size"),
+                       h.findtext(V2 + "md5"))
+                      for h in modern.findall(f"{V2}hashes/{V2}hash"))
+check("and the two files say exactly the same thing about the same files",
+      legacy_facts == modern_facts,
+      json.dumps([legacy_facts, modern_facts]))
+
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)
