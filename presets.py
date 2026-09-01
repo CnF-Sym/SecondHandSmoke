@@ -169,8 +169,10 @@ def save_from_day(day_id, name, folder_id=UNGROUPED, production=None, logo=None)
         preset_id = db.q1("SELECT id FROM presets WHERE folder_id=? AND name=?",
                           (folder_id, name))["id"]
 
-    db.ex("UPDATE presets SET pattern_camera=?, pattern_sound=? WHERE id=?",
-          (day["pattern_camera"] or "", day["pattern_sound"] or "", preset_id))
+    db.ex("UPDATE presets SET pattern_camera=?, pattern_sound=?, "
+          "filter_camera=?, filter_sound=? WHERE id=?",
+          (day["pattern_camera"] or "", day["pattern_sound"] or "",
+           day["filter_camera"] or "", day["filter_sound"] or "", preset_id))
 
     # Branding travels with the preset, including its own copy of the logo.
     stored_logo = _copy_logo(logo or pdfreport.branding()["logo"],
@@ -265,6 +267,19 @@ def apply(preset_id, day_id):
             continue
         db.ex(f"UPDATE days SET {column}=? WHERE id=?", (value, day_id))
         result[key] = value
+
+    # Filters come across too, and are announced rather than applied quietly.
+    # A preset that silently starts skipping files is the exact failure the
+    # amber verdict exists to prevent, arriving one step earlier.
+    for column in ("filter_camera", "filter_sound"):
+        value = (preset[column] or "").strip()
+        db.ex(f"UPDATE days SET {column}=? WHERE id=?", (value, day_id))
+        result[column] = value
+        if value:
+            result["warnings"].append(
+                f"This preset filters {column.replace('filter_', '')} cards: "
+                f"{naming.describe_filters(value)} Files it skips are listed on "
+                f"the card and the card can never read plain SAFE TO FORMAT.")
 
     result["project"] = preset["project"] or ""
     if preset["production_name"] is not None:

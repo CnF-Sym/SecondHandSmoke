@@ -34,6 +34,7 @@ Three rules that are not negotiable:
   A001C001.MXF, never A001__.MXF and never an empty name.
 """
 
+import fnmatch
 import os
 import re
 
@@ -208,3 +209,82 @@ def collisions(planned):
         key = os.path.normcase(entry["dest_rel_path"])
         seen.setdefault(key, []).append(entry["rel_path"])
     return [(key, sources) for key, sources in seen.items() if len(sources) > 1]
+
+
+# --- filtering -------------------------------------------------------------
+#
+# Filtering is the dangerous half of this feature, and not for the reason it
+# looks. The format gate means one sentence: everything on this card is
+# verified on two drives, so you can wipe it. Excluding files from the copy
+# makes that sentence false while the screen still says SAFE TO FORMAT, and
+# someone formats a card that held the only copy of what the filter dropped.
+#
+# So nothing here silently drops anything. This decides which files a filter
+# would skip; the catalog records every one of them as deliberately excluded,
+# and the gate gives a card with exclusions its own verdict that can never be
+# mistaken for the plain one.
+#
+# Syntax: a comma-separated list of shell-style globs matched against the
+# file's path on the card, case-insensitively. A pattern starting with "-"
+# excludes. If any plain (include) pattern is given, a file must match one of
+# them to be copied at all.
+
+
+def parse_filters(text):
+    """Split a filter string into (includes, excludes). Never raises."""
+    includes, excludes = [], []
+    for raw in (text or "").replace("\n", ",").split(","):
+        pattern = raw.strip()
+        if not pattern:
+            continue
+        if pattern.startswith("-") or pattern.startswith("!"):
+            pattern = pattern[1:].strip()
+            if pattern:
+                excludes.append(pattern)
+        else:
+            includes.append(pattern)
+    return includes, excludes
+
+
+def describe_filters(text):
+    """A sentence for the interface, or "" when nothing is filtered."""
+    includes, excludes = parse_filters(text)
+    if not includes and not excludes:
+        return ""
+    parts = []
+    if includes:
+        parts.append("only " + ", ".join(includes))
+    if excludes:
+        parts.append("never " + ", ".join(excludes))
+    return "Copying " + "; ".join(parts) + "."
+
+
+def _matches(rel_path, pattern):
+    """Match against the whole path and the bare filename.
+
+    Someone typing *.THM means "no thumbnails", not "no thumbnails in the root
+    folder", and a filter that quietly does the second thing is worse than no
+    filter at all.
+    """
+    lowered = rel_path.replace(os.sep, "/").lower()
+    pattern = pattern.replace(os.sep, "/").lower()
+    return (fnmatch.fnmatch(lowered, pattern)
+            or fnmatch.fnmatch(os.path.basename(lowered), pattern))
+
+
+def is_included(rel_path, text):
+    """Would this file be copied under these filters?"""
+    includes, excludes = parse_filters(text)
+    if includes and not any(_matches(rel_path, p) for p in includes):
+        return False
+    return not any(_matches(rel_path, p) for p in excludes)
+
+
+def split_by_filter(files, text):
+    """(kept, skipped) for a list of rows with rel_path. Pure."""
+    if not (text or "").strip():
+        return list(files), []
+    kept, skipped = [], []
+    for row in files:
+        (kept if is_included(row["rel_path"], text) else skipped).append(row)
+    return kept, skipped

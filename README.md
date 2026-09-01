@@ -289,6 +289,40 @@ The rules it holds to:
 
 Missing metadata degrades to the original name rather than to `A001__.MXF`.
 
+## Filtering
+
+Wildcard include/exclude patterns, per card kind, saved in a preset alongside
+the naming pattern. Comma-separated shell-style globs matched against the
+file's path on the card, case-insensitively; a pattern starting with `-`
+excludes. `-*.THM, -*/PROXY/*` skips camera thumbnails and in-camera proxies.
+
+**Read this part.** The format gate means one sentence: *everything on this
+card is verified on two drives, so you can wipe it.* Skipping files makes that
+sentence false. If the screen still said SAFE TO FORMAT, someone would format a
+card that held the only copy of whatever the filter dropped — no checksum
+wrong, no drive failed, the tool simply answering a different question than the
+one being asked.
+
+So a card with exclusions gets its own verdict and its own colour:
+
+> **CLEARED WITH EXCLUSIONS — 2 file(s) were not copied**
+
+Amber, never green. The skipped files are **named** on the card, in the day
+report, in an `_EXCLUDED.csv` beside the manifest, and in a comment inside the
+manifest saying it does not cover everything. You can still format the card.
+You cannot do it believing the whole card was copied.
+
+Three more rules:
+
+- **Nothing is skipped without being recorded.** Excluded files stay in the
+  catalog, marked as deliberately not copied.
+- **A filter changed afterwards cannot rewrite history.** A file that already
+  has a verified copy is never marked excluded, whatever the filter now says.
+- **A filter that would skip everything is refused**, not obeyed.
+
+Preview before you run. The interface lists exactly which files a filter would
+drop, and previewing changes nothing.
+
 ---
 
 ## Reports

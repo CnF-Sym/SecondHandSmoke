@@ -1596,8 +1596,8 @@ check("both renderers take the stamp wording from one place",
       "gate_stamp(st)" in open("reports.py", encoding="utf-8").read())
 
 check("the stamp wording matches the verdict",
-      reports.gate_stamp({"safe": True}) == ("SAFE TO FORMAT", True) and
-      reports.gate_stamp({"safe": False}) == ("DO NOT FORMAT", False))
+      reports.gate_stamp({"safe": True}) == ("SAFE TO FORMAT", True, "ok") and
+      reports.gate_stamp({"safe": False}) == ("DO NOT FORMAT", False, "bad"))
 
 pdf_ok, pdf_reason = pdfreport.availability()
 if pdf_ok:
@@ -2398,6 +2398,141 @@ naming_source = open("naming.py", encoding="utf-8").read()
 check("naming never touches the database or the filesystem",
       "import db" not in naming_source and "open(" not in naming_source
       and "card_status" not in naming_source)
+
+print("\n[33] a filtered card can never read plain SAFE TO FORMAT")
+
+# --- the pure part -------------------------------------------------------
+check("an empty filter keeps everything",
+      naming.is_included("anything.MXF", "") and naming.is_included("a/b.THM", "   "))
+check("an exclude pattern matches by filename anywhere on the card",
+      not naming.is_included("CLIPS/SUB/A001.THM", "-*.THM")
+      and naming.is_included("CLIPS/SUB/A001.MXF", "-*.THM"))
+check("an include pattern means only those files are copied",
+      naming.is_included("A.MXF", "*.MXF") and not naming.is_included("A.THM", "*.MXF"))
+check("a path pattern is matched against the whole path",
+      not naming.is_included("X/PROXY/a.MXF", "-*/PROXY/*")
+      and naming.is_included("X/CLIPS/a.MXF", "-*/PROXY/*"))
+check("filters are described in words for the interface",
+      "never" in naming.describe_filters("-*.THM"))
+check("split_by_filter is pure and keeps order",
+      naming.split_by_filter([{"rel_path": "a.MXF"}, {"rel_path": "b.THM"}],
+                             "-*.THM")[0][0]["rel_path"] == "a.MXF")
+
+# --- and now against the gate, which is the whole point ------------------
+write_fixture("F001_CARD/CLIPS/F001C001.MXF", 220, 8 * 1024)
+write_fixture("F001_CARD/CLIPS/F001C001.THM", 221, 1024)
+write_fixture("F001_CARD/CLIPS/F001C002.MXF", 222, 8 * 1024)
+write_fixture("F001_CARD/CLIPS/F001C002.THM", 223, 1024)
+
+status, body = post("/api/day", project="PROJECT_01", name="DAY_FILTER",
+                    shoot_date="2026-01-20")
+filter_day_id = body["day_id"]
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+post(f"/api/day/{filter_day_id}/naming", pattern_camera="{original}",
+     filter_camera="-*.THM")
+
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "F001_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+filter_card_id = body["card_id"]
+
+# Previewing must not change anything about the card.
+status, preview = get(f"/api/day/{filter_day_id}/naming/preview")
+this_card = next(card for card in preview["cards"]
+                 if card["card_id"] == filter_card_id)
+check("the preview says which files a filter would skip, before anything runs",
+      this_card["skipped_total"] == 2
+      and all(name.endswith(".THM") for name in this_card["skipped"]),
+      json.dumps(this_card["skipped"]))
+check("previewing does not mark anything excluded",
+      db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND COALESCE(excluded,0)=1",
+            (filter_card_id,))["c"] == 0)
+
+status, body = post(f"/api/offload/{filter_card_id}")
+check("the filtered offload starts", status == 200, body)
+wait_job()
+
+gate = reports.card_status(filter_card_id)
+check("the copied files are verified on both drives", gate["verified"] == 2, gate)
+check("the card is clear to format", gate["safe"], gate["reason"])
+
+# The entire reason this feature was built carefully.
+check("but it is NOT the plain green sentence",
+      gate["stamp"]["label"] != "SAFE TO FORMAT"
+      and "CLEARED WITH EXCLUSIONS" in gate["stamp"]["label"], gate["stamp"])
+check("and it is amber, not green", gate["stamp"]["tone"] == "warn", gate["stamp"])
+check("the skipped files are named, not just counted",
+      len(gate["excluded"]) == 2
+      and all(name.endswith(".THM") for name in gate["excluded"]), gate["excluded"])
+check("the reason says how many were deliberately not copied",
+      "deliberately not copied" in gate["reason"], gate["reason"])
+
+filtered_dir = os.path.join(DRIVE_A, "PROJECT_01", "DAY_FILTER", "CAMERA",
+                            "F001", "CLIPS")
+written = sorted(os.listdir(filtered_dir))
+check("the excluded files really were not written",
+      written == ["F001C001.MXF", "F001C002.MXF"], ", ".join(written))
+check("the excluded files are still on the card, untouched",
+      os.path.isfile(os.path.join(CARDS, "F001_CARD/CLIPS/F001C001.THM")))
+
+# Paperwork has to carry it too, or the amber on screen is the only warning.
+filter_dest = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primary'",
+                    (filter_day_id,))
+filter_mhl = reports.write_mhl(filter_card_id, filter_dest["id"])
+check("a manifest is still written for what was copied", bool(filter_mhl))
+filter_mhl_body = open(filter_mhl, encoding="utf-8").read()
+check("the manifest says out loud that it does not cover everything",
+      "deliberately" in filter_mhl_body and "_EXCLUDED.csv" in filter_mhl_body)
+check("the manifest is still well-formed XML", bool(ET.fromstring(filter_mhl_body)))
+excluded_csv = os.path.splitext(filter_mhl)[0] + "_EXCLUDED.csv"
+check("the skipped files are listed in a sidecar beside the manifest",
+      os.path.isfile(excluded_csv)
+      and len(list(csv.reader(open(excluded_csv, encoding="utf-8")))) == 3)
+
+filter_report = reports.render_html(reports.day_data(filter_day_id))
+check("the day report shows the amber verdict, not the green one",
+      "CLEARED WITH EXCLUSIONS" in filter_report
+      and "stamp warn" in filter_report)
+check("the day report names the skipped files",
+      "F001C001.THM" in filter_report and "Deliberately not copied" in filter_report)
+
+if pdf_ok:
+    filtered_pdf = pdfreport.build(filter_day_id, "table",
+                                   out_path=os.path.join(RIG, "report_filtered.pdf"))
+    check("the PDF is produced for a filtered card too",
+          os.path.getsize(filtered_pdf) > 1000)
+
+# A filter changed after the fact must not rewrite history.
+db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*.MXF", filter_day_id))
+card_row = db.q1("SELECT * FROM cards WHERE id=?", (filter_card_id,))
+day_row = db.q1("SELECT * FROM days WHERE id=?", (filter_day_id,))
+offload.apply_filters(card_row, day_row)
+check("a file that is already copied is never marked excluded afterwards",
+      db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND rel_path LIKE '%.MXF' "
+            "AND COALESCE(excluded,0)=1", (filter_card_id,))["c"] == 0)
+reports.invalidate_gate_cache(filter_card_id)
+check("so the card's verdict does not change under it",
+      reports.card_status(filter_card_id)["safe"])
+
+# A filter that would leave nothing to copy is refused rather than obeyed.
+db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*", filter_day_id))
+db.ex("UPDATE files SET excluded=0 WHERE card_id=?", (filter_card_id,))
+db.ex("DELETE FROM copies WHERE file_id IN "
+      "(SELECT id FROM files WHERE card_id=?)", (filter_card_id,))
+refusal = offload.preflight(filter_card_id, "offload", 2)
+check("a filter that would skip every file is refused, not obeyed",
+      refusal and "Nothing would be copied" in refusal, refusal)
+db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*.THM", filter_day_id))
+
+# Structural: the interface no longer writes the verdict's words itself.
+check("only one place decides what the stamp says",
+      '"SAFE TO FORMAT"' not in open("app.js", encoding="utf-8").read()
+      .split("function renderCards")[1].split("function renderDestSlots")[0]
+      or "g.stamp.label" in open("app.js", encoding="utf-8").read())
+check("the gate ships its stamp so every renderer reads the same words",
+      "gate[\"stamp\"]" in open("reports.py", encoding="utf-8").read())
 
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

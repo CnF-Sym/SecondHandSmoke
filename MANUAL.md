@@ -121,6 +121,27 @@ checksum; it defends against hardware.
 
 ---
 
+### Filtering and the gate
+
+A filter that skips files makes the plain verdict false: "everything on this
+card is verified on two drives" is not true of a card that was partly copied on
+purpose. The gate therefore has three answers, not two:
+
+| Verdict | Colour | Means |
+|---|---|---|
+| `SAFE TO FORMAT` | green | Every file on the card is verified on 2+ physical drives |
+| `CLEARED WITH EXCLUSIONS — n file(s) were not copied` | amber | Everything that was meant to be copied is verified; n files were deliberately skipped and are named |
+| `DO NOT FORMAT` | red | Something is missing, short of copies, or changed since verification |
+
+The amber verdict never reads as the green one anywhere: `reports.gate_stamp()`
+is the single definition of the wording and the colour, and since this release
+the interface reads `gate["stamp"]` from the server rather than writing the
+sentence itself. Excluded files are recorded in the catalog when the offload
+decides to skip them — never inferred at read time — so a filter changed after
+a shoot day cannot retroactively change what that day says. A file that already
+has a verified copy is never marked excluded whatever the filter now says, and
+a filter that would skip every file on a card is refused rather than obeyed.
+
 ## 3. How it is put together
 
 A Python web application with no external services. Flask serves a single-page
@@ -1057,6 +1078,10 @@ the two-drive requirement.
 | `collisions(planned)` | Names two source files would both claim |
 | `group_key(rel_path)` | Files renamed together: same folder, same stem |
 | `DEFAULT_PATTERN` | `{original}` — renaming is asked for, never automatic |
+| `parse_filters(text)` | `(includes, excludes)`; `-` prefixes an exclude |
+| `is_included(rel_path, text)` | Would this file be copied? |
+| `split_by_filter(files, text)` | `(kept, skipped)`, pure and order-preserving |
+| `describe_filters(text)` | The filter as a sentence, for the interface |
 
 Deliberately pure: no database, no filesystem, no clock. That is not tidiness —
 a function with no hidden inputs is one whose output can be proven identical

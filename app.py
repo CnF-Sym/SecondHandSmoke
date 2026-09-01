@@ -703,8 +703,12 @@ def set_naming(day_id):
         if problem:
             return jsonify(error=problem), 400
         values[key] = pattern
-    db.ex("UPDATE days SET pattern_camera=?, pattern_sound=? WHERE id=?",
-          (values["pattern_camera"], values["pattern_sound"], day_id))
+    for key in ("filter_camera", "filter_sound"):
+        values[key] = (body.get(key) or "").strip()
+    db.ex("UPDATE days SET pattern_camera=?, pattern_sound=?, "
+          "filter_camera=?, filter_sound=? WHERE id=?",
+          (values["pattern_camera"], values["pattern_sound"],
+           values["filter_camera"], values["filter_sound"], day_id))
     return jsonify(ok=True, **values)
 
 
@@ -721,6 +725,13 @@ def naming_preview(day_id):
     out = []
     for card in db.q("SELECT * FROM cards WHERE day_id=? ORDER BY roll, label",
                      (day_id,)):
+        # Previewing must never change what a card is. It reports what the
+        # filter would skip without writing a single excluded flag — those are
+        # written when an offload actually decides to skip something.
+        filters = offload.filters_for(day, card["kind"])
+        rows = db.q("SELECT id, rel_path FROM files WHERE card_id=? ORDER BY rel_path",
+                    (card["id"],))
+        kept, skipped = naming.split_by_filter([dict(r) for r in rows], filters)
         plan = offload.name_plan(card, day)
         entries = sorted(plan.values(), key=lambda e: e["rel_path"])
         clashes = naming.collisions(entries)
@@ -733,6 +744,11 @@ def naming_preview(day_id):
             "total": len(entries),
             "collisions": [{"name": os.path.basename(name), "sources": sources}
                            for name, sources in clashes],
+            "filter": filters,
+            "filter_summary": naming.describe_filters(filters),
+            "skipped": [row["rel_path"] for row in skipped][:20],
+            "skipped_total": len(skipped),
+            "kept_total": len(kept),
             "sample": [{"from": e["original_name"], "to": e["dest_name"],
                         "renamed": e["renamed"]} for e in entries[:12]],
         })
@@ -910,6 +926,8 @@ def state():
                               or naming.DEFAULT_PATTERN,
             "pattern_sound": (day["pattern_sound"] if day else "")
                              or naming.DEFAULT_PATTERN,
+            "filter_camera": (day["filter_camera"] if day else "") or "",
+            "filter_sound": (day["filter_sound"] if day else "") or "",
         },
         "destinations": [], "cards": [],
         "job": latest_job(),

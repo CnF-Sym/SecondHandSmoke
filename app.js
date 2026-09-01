@@ -503,6 +503,21 @@ function renderNaming(state) {
   if (document.activeElement !== $("patternSound")) {
     $("patternSound").value = naming.pattern_sound || "";
   }
+  if (document.activeElement !== $("filterCamera")) {
+    $("filterCamera").value = naming.filter_camera || "";
+  }
+  if (document.activeElement !== $("filterSound")) {
+    $("filterSound").value = naming.filter_sound || "";
+  }
+  const filtering = [naming.filter_camera, naming.filter_sound]
+    .filter(f => (f || "").trim());
+  const warn = $("filterWarning");
+  warn.hidden = filtering.length === 0;
+  warn.textContent = filtering.length
+    ? "A filter is active. Files it skips are not copied, are listed on the card "
+      + "and in the report, and the card will read CLEARED WITH EXCLUSIONS rather "
+      + "than SAFE TO FORMAT — because it will not be fully copied."
+    : "";
   $("namingTokens").innerHTML = "Tokens: "
     + (naming.tokens || []).map(t => `<code>{${esc(t)}}</code>`).join(" ")
     + `. <code>${esc(naming.default || "{original}")}</code> keeps camera names.`;
@@ -515,6 +530,8 @@ async function saveNaming() {
       body: JSON.stringify({
         pattern_camera: $("patternCamera").value.trim(),
         pattern_sound: $("patternSound").value.trim(),
+        filter_camera: $("filterCamera").value.trim(),
+        filter_sound: $("filterSound").value.trim(),
       }) });
     toast("Naming saved.");
     previewNaming();
@@ -542,12 +559,17 @@ async function previewNaming() {
         <span class="grow path">${esc(item.from)}</span>
         <span class="path">${item.renamed ? "→ " + esc(item.to) : "unchanged"}</span>
       </div>`).join("");
+    const skipped = card.skipped_total ? `<div class="scan-problem">
+        ${card.skipped_total} file(s) would not be copied:
+        ${card.skipped.map(esc).join(", ")}${card.skipped_total > card.skipped.length
+          ? " …" : ""}. This card will read CLEARED WITH EXCLUSIONS, not SAFE TO
+        FORMAT.</div>` : "";
     const more = card.total > card.sample.length
       ? `<div class="row"><span class="grow empty">…and ${card.total - card.sample.length} more</span></div>`
       : "";
     return `<div class="preset-folder"><span>${esc(card.label)} ·
         ${card.renamed} of ${card.total} renamed</span></div>
-      ${clashes}<div class="list">${rows}${more}</div>`;
+      ${clashes}${skipped}<div class="list">${rows}${more}</div>`;
   }).join("");
 }
 
@@ -782,11 +804,14 @@ function renderCards(cards, dayId) {
         <span class="slate-meta">${esc(c.kind)} · ${c.file_count} files · ${bytes(c.total_bytes)}
           ${metadataLine}${proxyLine}${syncLine}${c.mounted ? "" : " · <b>card not mounted</b>"}</span>
       </div>
-      <div class="verdict ${g.safe ? "yes" : "no"}">
+      <div class="verdict ${g.stamp ? esc(g.stamp.tone) : (g.safe ? "ok" : "bad")}">
         <span class="lamp"></span>
-        <span class="verdict-text">${g.safe ? "SAFE TO FORMAT" : "DO NOT FORMAT"}
+        <span class="verdict-text">${esc(g.stamp ? g.stamp.label
+          : (g.safe ? "SAFE TO FORMAT" : "DO NOT FORMAT"))}
         <small>${esc(g.reason)}</small></span>
       </div>
+      ${(g.excluded || []).length ? `<div class="excluded-list">
+        Deliberately not copied: ${g.excluded.map(esc).join(", ")}</div>` : ""}
       <div class="slate-actions">
         <button class="btn sm ${g.safe ? "" : "go"}" onclick="offload(${c.id})"
           ${c.mounted ? "" : "disabled"}>

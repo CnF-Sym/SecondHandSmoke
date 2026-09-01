@@ -115,14 +115,42 @@ def _device_map(card_id):
 def card_status(card_id):
     """Can this card be formatted?
 
+    Thin wrapper so the stamp travels with the verdict. The interface used to
+    write "SAFE TO FORMAT" itself, which made it a second place the wording
+    could drift from the reports. Now every renderer — the cart screen, the
+    HTML report and the PDF — reads gate["stamp"] from gate_stamp().
+    """
+    gate = _card_status(card_id)
+    label, safe, tone = gate_stamp(gate)
+    gate["stamp"] = {"label": label, "safe": safe, "tone": tone}
+    return gate
+
+
+def _card_status(card_id):
+    """The verdict itself.
+
     Only if every single file on it has been read back and checksum-matched
     on at least MIN_VERIFIED_COPIES separate *physical drives*. Anything less
     and the answer is no, with the reason.
     """
-    files = db.q("SELECT * FROM files WHERE card_id=?", (card_id,))
-    if not files:
+    catalogued = db.q("SELECT * FROM files WHERE card_id=?", (card_id,))
+    if not catalogued:
         return {"safe": False, "reason": "No files catalogued for this card",
-                "verified": 0, "total": 0, "short": []}
+                "verified": 0, "total": 0, "short": [], "excluded": []}
+
+    # Files a filter deliberately skipped. They are not failures and they are
+    # not secrets: they are counted separately, listed by name, and they give
+    # the card a verdict of its own that cannot be mistaken for the plain one.
+    excluded, files = [], []
+    for row in catalogued:
+        marked = row["excluded"] if "excluded" in row.keys() else 0
+        (excluded if marked else files).append(row)
+    excluded_names = [f["rel_path"] for f in excluded][:50]
+    if not files:
+        return {"safe": False,
+                "reason": f"Every file on this card ({len(excluded)}) was excluded "
+                          f"by a filter. Nothing was copied.",
+                "verified": 0, "total": 0, "short": [], "excluded": excluded_names}
 
     card = db.q1("SELECT status FROM cards WHERE id=?", (card_id,))
     if card and card["status"] in ("offloading", "verifying", "failed", "cancelled"):
@@ -133,7 +161,8 @@ def card_status(card_id):
             "cancelled": "The most recent job was cancelled",
         }[card["status"]]
         return {"safe": False, "reason": label,
-                "verified": 0, "total": len(files), "short": []}
+                "verified": 0, "total": len(files), "short": [],
+                "excluded": excluded_names}
 
     devices = _device_map(card_id)
     short = []
@@ -166,7 +195,8 @@ def card_status(card_id):
     if zero_byte:
         return {"safe": False, "reason": f"{len(zero_byte)} zero-byte file(s) on card",
                 "verified": fully_verified, "total": len(files), "short": short[:50],
-                "zero_byte": zero_byte[:20], "live_issues": live_issues[:20]}
+                "zero_byte": zero_byte[:20], "live_issues": live_issues[:20],
+                "excluded": excluded_names}
 
     if short:
         reason = f"{len(short)} file(s) below {MIN_VERIFIED_COPIES} verified copies"
@@ -178,12 +208,25 @@ def card_status(card_id):
         return {"safe": False, "reason": reason,
                 "verified": fully_verified, "total": len(files), "short": short[:50],
                 "shared_drives": sorted(shared_drives),
-                "live_issues": live_issues[:20]}
+                "live_issues": live_issues[:20], "excluded": excluded_names}
+
+    if excluded:
+        # Everything that was meant to be copied is safe on two drives. What is
+        # not true, and must not be implied, is "everything on this card". The
+        # operator can still format it; they simply cannot do it believing the
+        # whole card was copied.
+        return {"safe": True, "with_exclusions": True,
+                "reason": f"{len(files)} file(s) verified on {MIN_VERIFIED_COPIES}+ "
+                          f"separate drives — {len(excluded)} file(s) were "
+                          f"deliberately not copied",
+                "verified": fully_verified, "total": len(files), "short": [],
+                "shared_drives": [], "live_issues": [],
+                "excluded": excluded_names, "excluded_count": len(excluded)}
 
     return {"safe": True,
             "reason": f"All {len(files)} files verified on {MIN_VERIFIED_COPIES}+ separate drives",
             "verified": fully_verified, "total": len(files), "short": [],
-            "shared_drives": [], "live_issues": []}
+            "shared_drives": [], "live_issues": [], "excluded": []}
 
 
 def _live_gap(f, dest_path, dest_root=None):
@@ -230,9 +273,14 @@ def write_mhl(card_id, destination_id):
                    FROM files f JOIN copies c ON c.file_id = f.id
                    WHERE f.card_id=? AND c.destination_id=? AND c.state='verified'
                    ORDER BY f.rel_path""", (card_id, destination_id))
-    total = db.q1("SELECT COUNT(*) c FROM files WHERE card_id=?", (card_id,))["c"]
+    # Excluded files were never meant to be here, so their absence must not
+    # stop the manifest being written for everything that was.
+    total = db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND "
+                  "COALESCE(excluded,0)=0", (card_id,))["c"]
     if not rows or len(rows) != total:
         return None
+    skipped = db.q("SELECT rel_path, size FROM files WHERE card_id=? AND "
+                   "COALESCE(excluded,0)=1 ORDER BY rel_path", (card_id,))
 
     root = os.path.join(dest["path"], day["project"], day["name"])
     os.makedirs(root, exist_ok=True)
@@ -254,6 +302,14 @@ def write_mhl(card_id, destination_id):
         f'    <finishdate>{stamp}</finishdate>',
         '  </creatorinfo>',
     ]
+    if skipped:
+        # A manifest that silently omits files is a manifest that lies by
+        # omission. It cannot say so in an element — the schema forbids one —
+        # so it says so where a human will read it, and names the sidecar that
+        # lists them.
+        lines.append(f'  <!-- {len(skipped)} file(s) on this card were deliberately '
+                     f'not copied and are not covered by this manifest. '
+                     f'They are listed in the _EXCLUDED.csv beside this file. -->')
     renamed = []
     for r in rows:
         rel = os.path.relpath(r["dest_path"], root)
@@ -289,6 +345,23 @@ def write_mhl(card_id, destination_id):
     # The machine-readable half of "the manifest records both names". It sits
     # beside the MHL and travels with the day, rather than living only in this
     # program's catalog.
+    excluded_path = os.path.splitext(out_path)[0] + "_EXCLUDED.csv"
+    if skipped:
+        partial_excluded = excluded_path + ".partial"
+        with open(partial_excluded, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(["not_copied", "size"])
+            for row in skipped:
+                writer.writerow([row["rel_path"], row["size"]])
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(partial_excluded, excluded_path)
+    elif os.path.isfile(excluded_path):
+        try:
+            os.remove(excluded_path)
+        except OSError:
+            pass
+
     names_path = os.path.splitext(out_path)[0] + "_NAMES.csv"
     if renamed:
         partial_names = names_path + ".partial"
@@ -349,6 +422,7 @@ td{padding:5px 8px;border-bottom:1px solid #f0f0f0}
 .stamp{border:2px solid #0a7c50;color:#0a7c50;display:inline-block;padding:8px 16px;
 letter-spacing:.16em;font-weight:700;margin:6px 0}
 .stamp.bad{border-color:#b3261e;color:#b3261e}
+.stamp.warn{border-color:#9a6500;color:#9a6500}
 .hash{color:#888;font-size:11px}
 """
 
@@ -435,8 +509,19 @@ def gate_stamp(gate):
     whether a card can be formatted is the one bug this whole program exists to
     prevent, so the sentence itself has one definition too, not just the data
     behind it.
+
+    Returns (label, safe, tone). A card with exclusions gets its own words and
+    its own colour — never the plain green sentence, because the plain sentence
+    means "everything on this card is on two drives", and that is exactly what
+    stops being true the moment a filter skips something.
     """
-    return ("SAFE TO FORMAT", True) if gate["safe"] else ("DO NOT FORMAT", False)
+    if not gate.get("safe"):
+        return ("DO NOT FORMAT", False, "bad")
+    if gate.get("with_exclusions"):
+        skipped = gate.get("excluded_count") or len(gate.get("excluded") or [])
+        return (f"CLEARED WITH EXCLUSIONS — {skipped} file(s) were not copied",
+                True, "warn")
+    return ("SAFE TO FORMAT", True, "ok")
 
 
 def _dicts(result):
@@ -631,12 +716,17 @@ def render_html(data):
         c = entry["card"]
         st = entry["gate"]
         files = entry["files"]
-        label, safe = gate_stamp(st)
-        stamp = (f"<div class=stamp>{label}</div>" if safe
-                 else f"<div class='stamp bad'>{label}</div>")
+        label, safe, tone = gate_stamp(st)
+        stamp = f"<div class='stamp {'' if tone == 'ok' else tone}'>{label}</div>"
         p.append(f"<h2>Card {e(c['roll'] or c['label'])} &middot; {e(c['kind'])}</h2>")
         p.append(stamp + f"<div class=sub>{e(st['reason'])} &nbsp;·&nbsp; "
                          f"{len(files)} files &nbsp;·&nbsp; {human_bytes(c['total_bytes'])}</div>")
+        if st.get("excluded"):
+            # Named, not counted. "3 files were not copied" is a number; the
+            # person reading this needs to know whether they were thumbnails or
+            # the second camera's takes.
+            p.append("<div class=sub><b>Deliberately not copied:</b> "
+                     + ", ".join(e(name) for name in st["excluded"]) + "</div>")
 
         media_rows = entry["media"]
         if media_rows:

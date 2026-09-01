@@ -392,6 +392,14 @@ def init():
     _add_column("days", "pattern_sound", "TEXT")
     _add_column("presets", "pattern_camera", "TEXT")
     _add_column("presets", "pattern_sound", "TEXT")
+    _add_column("days", "filter_camera", "TEXT")
+    _add_column("days", "filter_sound", "TEXT")
+    _add_column("presets", "filter_camera", "TEXT")
+    _add_column("presets", "filter_sound", "TEXT")
+    # A file deliberately not copied. Never inferred at read time: it is
+    # written when an offload decides to skip it, so a filter changed
+    # afterwards cannot retroactively rewrite what happened on a shoot day.
+    _add_column("files", "excluded", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _add_column(table, column, declaration):

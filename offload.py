@@ -121,6 +121,47 @@ def pattern_for(day, kind):
     return (value or "").strip() or naming.DEFAULT_PATTERN
 
 
+def filters_for(day, kind):
+    """The include/exclude filter this day uses for this kind of card."""
+    column = "filter_sound" if kind == "sound" else "filter_camera"
+    try:
+        return (day[column] or "").strip()
+    except (IndexError, KeyError):
+        return ""
+
+
+def apply_filters(card, day):
+    """Record which files this offload will deliberately skip.
+
+    Written once, at the point the decision is made, and never inferred at read
+    time. A filter changed after a card was copied must not retroactively
+    rewrite what happened on a shoot day — and a file that already has a copy
+    on a drive is not "skipped" by any meaningful definition, so it is never
+    marked excluded no matter what the filter now says.
+
+    Returns (kept, skipped) counts.
+    """
+    text = filters_for(day, card["kind"])
+    rows = db.q("SELECT id, rel_path FROM files WHERE card_id=?", (card["id"],))
+    kept = skipped = 0
+    for row in rows:
+        already = db.q1("SELECT 1 FROM copies WHERE file_id=? AND "
+                        "state IN ('copied','verified') LIMIT 1", (row["id"],))
+        excluded = 0 if already else (0 if naming.is_included(row["rel_path"], text) else 1)
+        db.ex("UPDATE files SET excluded=? WHERE id=?", (excluded, row["id"]))
+        if excluded:
+            skipped += 1
+        else:
+            kept += 1
+    return kept, skipped
+
+
+def active_files(card_id):
+    """The files this card will actually copy — everything not filtered out."""
+    return db.q("SELECT * FROM files WHERE card_id=? AND COALESCE(excluded,0)=0 "
+                "ORDER BY rel_path", (card_id,))
+
+
 def name_plan(card, day):
     """Every destination name for this card, keyed by file id.
 
@@ -131,7 +172,8 @@ def name_plan(card, day):
     rows = db.q("""SELECT f.id, f.rel_path, f.category,
                           m.scene, m.take_name, m.reel_name
                    FROM files f LEFT JOIN media_metadata m ON m.file_id=f.id
-                   WHERE f.card_id=? ORDER BY f.rel_path""", (card["id"],))
+                   WHERE f.card_id=? AND COALESCE(f.excluded,0)=0
+                   ORDER BY f.rel_path""", (card["id"],))
     planned = naming.plan([dict(row) for row in rows], card, day,
                           pattern_for(day, card["kind"]))
     return {entry["id"]: entry for entry in planned}
@@ -267,7 +309,13 @@ def preflight(card_id, mode, min_copies):
         problem = naming.validate(pattern_for(day, card["kind"]))
         if problem:
             return problem
-        files = db.q("SELECT * FROM files WHERE card_id=?", (card_id,))
+        # Decide what is being skipped before anything else looks at the card,
+        # so every check below sees the same set of files the copy will.
+        apply_filters(card, day)
+        files = active_files(card_id)
+        if not files:
+            return ("Every file on this card matches the exclude filter. "
+                    "Nothing would be copied.")
         plan = name_plan(card, day)
         collision = _target_collision(files, dests, day, card, plan)
         if collision:
@@ -393,7 +441,11 @@ class Job:
             "VALUES (?,'offload',?,?)",
             (self.card_id, "running", db.now()))
 
-        files = db.q("SELECT * FROM files WHERE card_id=? ORDER BY rel_path", (self.card_id,))
+        apply_filters(card, day)
+        files = active_files(self.card_id)
+        if not files:
+            raise RuntimeError("Every file on this card matches the exclude "
+                               "filter. Nothing would be copied.")
         # One plan for the whole card, computed once. Every destination path
         # below comes from it, so a resumed job cannot land somewhere else.
         plan = name_plan(card, day)

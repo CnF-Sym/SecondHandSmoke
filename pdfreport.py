@@ -243,12 +243,18 @@ def _card_heading(rl, styles, entry, story):
     gate = entry["gate"]
     story.append(rl["Paragraph"](
         f"Card {_esc(c['roll'] or c['label'])} &middot; {_esc(c['kind'])}", styles["h2"]))
-    label, safe = reports.gate_stamp(gate)
-    colour = GOOD if safe else BAD
+    label, safe, tone = reports.gate_stamp(gate)
+    colour = {"ok": GOOD, "warn": WARN, "bad": BAD}[tone]
     story.append(rl["Paragraph"](f"<font color='{colour}'>{label}</font>", styles["stamp"]))
     story.append(rl["Paragraph"](
         f"{_esc(gate['reason'])} &nbsp;·&nbsp; {len(entry['files'])} files "
         f"&nbsp;·&nbsp; {_esc(reports.human_bytes(c['total_bytes']))}", styles["sub"]))
+    if gate.get("excluded"):
+        story.append(rl["Paragraph"](
+            f"<font color='{WARN}'>Deliberately not copied: "
+            + _esc(", ".join(os.path.basename(name) for name in gate["excluded"][:12]))
+            + ("…" if len(gate["excluded"]) > 12 else "")
+            + "</font>", styles["sub"]))
     if entry.get("renamed_count"):
         story.append(rl["Paragraph"](
             f"{entry['renamed_count']} of {len(entry['files'])} files were renamed "
