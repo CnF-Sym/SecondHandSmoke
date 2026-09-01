@@ -2692,5 +2692,39 @@ check("forgetting a drive removes it and its index",
 check("but the drive itself is untouched", os.path.isdir(DRIVE_A)
       and len(os.listdir(DRIVE_A)) > 0)
 
+print("\n[35] the README's promises about this file")
+
+# The README now points strangers at this file as the reason to trust the
+# program. If it names a section that has moved, the argument collapses at the
+# first person who checks — which is the only kind of person it is for.
+rig_source = open("test_rig.py", encoding="utf-8").read()
+readme_text = open("README.md", encoding="utf-8").read()
+
+sections = set(_re.findall(r'print\("\\n\[(\d+)\]', rig_source))
+promised = set(_re.findall(r"\*\*\[(\d+)\](?:, \[(\d+)\])?\*\*", readme_text))
+promised = {number for pair in promised for number in pair if number}
+missing = sorted(promised - sections, key=int)
+check("every section the README points at exists", not missing,
+      ", ".join(missing))
+
+check("the README tells people to run it, with the real command",
+      ".venv/bin/python test_rig.py" in readme_text
+      and "Don't trust it" in readme_text)
+check("and gives them somewhere to report a failure",
+      "hello@cnfworks.com" in readme_text.split("Don't trust it")[1][:2000])
+
+claimed = _re.search(r"\*\*(\d+) checks across (\d+) sections\*\*", readme_text)
+if claimed:
+    actual_sections = len(sections)
+    check("the section count in the README is true",
+          int(claimed.group(2)) == actual_sections,
+          f"README says {claimed.group(2)}, there are {actual_sections}")
+    check("the check count in the README is not an overclaim",
+          rig_source.count("check(") >= int(claimed.group(1)),
+          f"README says more than {claimed.group(1)}")
+else:
+    check("the README's count of checks and sections is stated in a checkable way",
+          False, "the phrasing changed; update this test with it")
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

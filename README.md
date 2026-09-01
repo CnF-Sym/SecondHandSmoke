@@ -26,6 +26,46 @@ licence key. It runs entirely on your machine, bound to loopback.
 
 ---
 
+## Don't trust it. Check it.
+
+You are being asked to let an unfamiliar program tell you when it is safe to
+erase the only copy of a day's work. You should not take that on faith, and you
+do not have to.
+
+```bash
+.venv/bin/python test_rig.py
+```
+
+That runs in under a minute on any Mac and needs no hardware. It builds
+synthetic camera and sound cards, offloads them for real, and then attacks the
+result: it corrupts a file without changing its size, truncates another,
+deletes a third, alters a source file after registration, silently rots a copy
+that had already been verified, collapses two destinations onto one physical
+drive, and cancels jobs mid-write. After each one it checks that the format
+gate closed, that the reason given is the right reason, and that nothing on the
+simulated card was touched.
+
+More than **400 checks across 35 sections**. The ones that matter most:
+
+| Section | What it proves |
+|---|---|
+| **[4], [5]** | A verified offload, and that the source card is byte-for-byte unchanged |
+| **[7]** | Same-size corruption, truncation and deletion are each caught |
+| **[8]** | Silent rot in an already-verified copy is caught on re-read |
+| **[16]** | A cancelled offload leaves no partial files and cannot clear a card |
+| **[18]** | A copy corrupted on a connected drive reopens the gate immediately |
+| **[19]** | Two folders on one physical drive count as one, and cross-site requests are refused |
+| **[33]** | A card with filtered files can never read plain SAFE TO FORMAT |
+
+If any of that fails on your machine, do not use this, and please tell us:
+**<hello@cnfworks.com>**.
+
+This is not a claim that the program is correct. It is a claim that you can
+find out for yourself in a minute, without taking anyone's word for it — and
+that is a claim worth more than any feature list.
+
+---
+
 ## Why this exists
 
 The paid tools in this space are good. Silverstack is a full DIT station and
@@ -650,9 +690,10 @@ Run the tests any time you change something:
 .venv/bin/python test_rig.py
 ```
 
-The test builds disposable synthetic camera and sound cards, offloads them, then
-deliberately changes the source and corrupts, truncates and deletes destination
-files to confirm each fault is caught. It never touches mounted media.
+Everything must pass before a commit. See **[Don't trust it. Check it.](#dont-trust-it-check-it)**
+above for what it actually does — it is the argument for using this program at
+all, not a chore. Anything touching the verification path needs a test that
+proves the *failure* is still caught, not just that the happy path works.
 
 ---
 
