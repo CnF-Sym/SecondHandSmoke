@@ -38,6 +38,7 @@ record of any card, copy or verification.
 """
 
 import os
+import re
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -136,11 +137,20 @@ def forget(drive_id):
 # Reading manifests that are already on the drive
 
 
-def read_manifest(path):
-    """What an ASC MHL 1.1 manifest says about the files beside it.
+def _local(tag):
+    """A tag name without its namespace. ASC MHL 1.1 has none; 2.0 does."""
+    if not isinstance(tag, str):
+        return ""
+    return tag.split("}", 1)[-1]
 
-    Ours or anyone's. Returns a dict, or None if this is not a manifest we can
-    read — which is never an error, just a file we learned nothing from.
+
+def read_manifest(path):
+    """What an ASC MHL manifest says about the files beside it.
+
+    Reads both formats — 1.1, where the entry is <file> and the digest element
+    names the algorithm, and 2.0, where it is <path> under a namespace. Ours or
+    anyone's. Returns a dict, or None if this is not a manifest we can read,
+    which is never an error, just a file we learned nothing from.
     """
     try:
         if os.path.getsize(path) > 64 * 1024 * 1024:
@@ -148,26 +158,49 @@ def read_manifest(path):
         root = ET.parse(path).getroot()
     except (OSError, ET.ParseError):
         return None
-    if root.tag != "hashlist":
+    if _local(root.tag) != "hashlist":
         return None
 
-    creator = root.find("creatorinfo")
-    hashes = root.findall("hash")
+    # 2.0 names the digest element after the algorithm too, but adds three the
+    # 1.1 schema never had. Order is only a preference for which to report when
+    # a manifest carries several.
+    digest_tags = ("xxhash64be", "xxhash64", "xxhash", "xxh64", "xxh128",
+                   "xxh3", "md5", "sha1", "c4")
     files = []
-    for entry in hashes:
-        name = entry.findtext("file")
-        if not name:
+    for entry in root.iter():
+        if _local(entry.tag) != "hash":
             continue
-        digest = next((entry.findtext(tag) for tag in
-                       ("xxhash64be", "xxhash64", "xxhash", "md5", "sha1")
-                       if entry.findtext(tag)), None)
-        files.append({"rel_path": name,
-                      "size": int(entry.findtext("size") or 0),
-                      "hash": digest})
+        children = {}
+        for child in entry:
+            children.setdefault(_local(child.tag), child)
+        # <file> is 1.1; <path> is 2.0, and there the size is an attribute.
+        name_el = children.get("file") or children.get("path")
+        if name_el is None or not (name_el.text or "").strip():
+            continue
+        size = children.get("size")
+        size = (size.text if size is not None else None) or name_el.get("size") or 0
+        digest = next((children[tag].text for tag in digest_tags
+                       if tag in children and children[tag].text), None)
+        try:
+            size = int(size)
+        except (TypeError, ValueError):
+            size = 0
+        files.append({"rel_path": name_el.text.strip(),
+                      "size": size,
+                      "hash": (digest or "").strip() or None})
     if not files:
         return None
+    creator = next((el for el in root.iter()
+                    if _local(el.tag) == "creatorinfo"), None)
+    tool = ""
+    if creator is not None:
+        tool_el = next((el for el in creator if _local(el.tag) == "tool"), None)
+        if tool_el is not None:
+            # 1.1 puts the version in the text; 2.0 puts it in an attribute.
+            tool = " ".join(x for x in ((tool_el.text or "").strip(),
+                                        tool_el.get("version") or "") if x)
     return {
-        "tool": (creator.findtext("tool") if creator is not None else "") or "",
+        "tool": tool,
         "file_count": len(files),
         "files": files,
     }
@@ -182,12 +215,21 @@ def _day_from_manifest_path(drive_root, manifest_path):
     """
     relative = os.path.relpath(manifest_path, drive_root)
     parts = relative.split(os.sep)
+    # An ASC MHL 2.0 manifest sits one level deeper, inside ascmhl/, so the
+    # day folder is its grandparent rather than its parent.
+    if len(parts) > 1 and parts[-2] == "ascmhl":
+        parts = parts[:-2] + parts[-1:]
     project = parts[0] if len(parts) > 1 else ""
     day_name = parts[1] if len(parts) > 2 else ""
     stem = os.path.splitext(os.path.basename(manifest_path))[0]
-    roll = stem[len(day_name) + 1:] if day_name and stem.startswith(day_name + "_") \
-        else stem
-    return project, day_name, roll
+    if day_name and stem.startswith(day_name + "_"):
+        # Our own 1.1 name: DAY_ROLL.mhl
+        return project, day_name, stem[len(day_name) + 1:]
+    # A 2.0 name: NNNN_ROLL_YYYY-MM-DD_HHMMSSZ.mhl. Strip the generation
+    # number off the front and the timestamp off the back, and what is left
+    # is what the tool that wrote it called the folder.
+    match = re.match(r"^\d{4,}_(.+)_\d{4}-\d{2}-\d{2}_\d{6}Z$", stem)
+    return project, day_name, match.group(1) if match else stem
 
 
 # --------------------------------------------------------------------------
