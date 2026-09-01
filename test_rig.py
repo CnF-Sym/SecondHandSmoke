@@ -2335,7 +2335,8 @@ rename_dest = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primar
 mhl_path = reports.write_mhl(rename_card_id, rename_dest["id"])
 check("a manifest is written for a renamed card", bool(mhl_path), mhl_path)
 mhl_body = open(mhl_path, encoding="utf-8").read()
-check("the manifest is still well-formed XML", bool(ET.fromstring(mhl_body)))
+check("the manifest is still well-formed XML",
+      ET.fromstring(mhl_body) is not None)
 check("the manifest lists the names the files were written under",
       "DAY_RENAME_R001_0001.MXF" in mhl_body)
 check("the manifest also records what each file was called on the card",
@@ -2485,7 +2486,8 @@ check("a manifest is still written for what was copied", bool(filter_mhl))
 filter_mhl_body = open(filter_mhl, encoding="utf-8").read()
 check("the manifest says out loud that it does not cover everything",
       "deliberately" in filter_mhl_body and "_EXCLUDED.csv" in filter_mhl_body)
-check("the manifest is still well-formed XML", bool(ET.fromstring(filter_mhl_body)))
+check("the manifest is still well-formed XML",
+      ET.fromstring(filter_mhl_body) is not None)
 excluded_csv = os.path.splitext(filter_mhl)[0] + "_EXCLUDED.csv"
 check("the skipped files are listed in a sidecar beside the manifest",
       os.path.isfile(excluded_csv)
@@ -2504,17 +2506,51 @@ if pdf_ok:
     check("the PDF is produced for a filtered card too",
           os.path.getsize(filtered_pdf) > 1000)
 
-# A filter changed after the fact must not rewrite history.
+# A filter changed after the fact must not rewrite history. Two separate
+# properties, and the difference between them matters.
 db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*.MXF", filter_day_id))
+reports.invalidate_gate_cache(filter_card_id)
+check("changing a filter does not touch a card that is not being offloaded",
+      reports.card_status(filter_card_id)["stamp"]["tone"] == "warn"
+      and len(reports.card_status(filter_card_id)["excluded"]) == 2,
+      "the flags are written when an offload decides to skip, not when a "
+      "setting changes")
+
+# Now actually start deciding again, which is the only moment the flags move.
 card_row = db.q1("SELECT * FROM cards WHERE id=?", (filter_card_id,))
 day_row = db.q1("SELECT * FROM days WHERE id=?", (filter_day_id,))
 offload.apply_filters(card_row, day_row)
 check("a file that is already copied is never marked excluded afterwards",
       db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND rel_path LIKE '%.MXF' "
             "AND COALESCE(excluded,0)=1", (filter_card_id,))["c"] == 0)
+
+# And the other half, which is not history being rewritten but intent changing:
+# the THMs are no longer filtered out, so they are files this card is supposed
+# to have and does not. The gate must say so rather than staying green out of
+# politeness.
 reports.invalidate_gate_cache(filter_card_id)
-check("so the card's verdict does not change under it",
-      reports.card_status(filter_card_id)["safe"])
+reopened = reports.card_status(filter_card_id)
+check("files a filter stops excluding become copyable again",
+      db.q1("SELECT COUNT(*) c FROM files WHERE card_id=? AND rel_path LIKE '%.THM' "
+            "AND COALESCE(excluded,0)=1", (filter_card_id,))["c"] == 0)
+check("and the card stops being clear, because it is now genuinely incomplete",
+      not reopened["safe"] and reopened["stamp"]["tone"] == "bad",
+      reopened["reason"])
+
+# Put it back the way it was and confirm it settles to amber again.
+db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*.THM", filter_day_id))
+offload.apply_filters(db.q1("SELECT * FROM cards WHERE id=?", (filter_card_id,)),
+                      db.q1("SELECT * FROM days WHERE id=?", (filter_day_id,)))
+reports.invalidate_gate_cache(filter_card_id)
+restored = reports.card_status(filter_card_id)
+check("restoring the filter returns the card to cleared-with-exclusions",
+      restored["safe"] and restored["stamp"]["tone"] == "warn", restored["reason"])
+
+# Re-reading the drives must not move a single flag: it is checking what is
+# there, not deciding what to copy.
+verify_source = open("offload.py", encoding="utf-8").read()
+check("only an offload applies filters — a verify run never does",
+      'if self.mode == "offload":\n            apply_filters' in verify_source)
 
 # A filter that would leave nothing to copy is refused rather than obeyed.
 db.ex("UPDATE days SET filter_camera=? WHERE id=?", ("-*", filter_day_id))

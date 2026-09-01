@@ -441,7 +441,11 @@ class Job:
             "VALUES (?,'offload',?,?)",
             (self.card_id, "running", db.now()))
 
-        apply_filters(card, day)
+        # Only an offload decides what to skip. A verify run is re-reading what
+        # is already on the drives; letting it move exclusion flags would mean
+        # "Re-read drives" could quietly change what a finished card claims.
+        if self.mode == "offload":
+            apply_filters(card, day)
         files = active_files(self.card_id)
         if not files:
             raise RuntimeError("Every file on this card matches the exclude "

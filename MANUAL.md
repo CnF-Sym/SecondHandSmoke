@@ -142,6 +142,16 @@ a shoot day cannot retroactively change what that day says. A file that already
 has a verified copy is never marked excluded whatever the filter now says, and
 a filter that would skip every file on a card is refused rather than obeyed.
 
+**When the flags move.** Exclusion is decided at the moment an offload starts,
+and at no other time. Changing a filter does not touch a card that is not being
+offloaded, and a verify run — "Re-read drives" — never applies filters at all,
+because it is checking what is on the drives rather than deciding what to copy.
+Start an offload again and the decision is remade: files the filter no longer
+excludes become files the card is supposed to have, so a card that was amber
+correctly turns red until they are copied. That is intent changing, not history
+being rewritten; the files that were already copied keep their verified copies
+either way.
+
 ## 3. How it is put together
 
 A Python web application with no external services. Flask serves a single-page
