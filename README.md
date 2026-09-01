@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **400 checks across 36 sections**. The ones that matter most:
+More than **400 checks across 37 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -56,6 +56,7 @@ More than **400 checks across 36 sections**. The ones that matter most:
 | **[18]** | A copy corrupted on a connected drive reopens the gate immediately |
 | **[19]** | Two folders on one physical drive count as one, and cross-site requests are refused |
 | **[33]** | A card with filtered files can never read plain SAFE TO FORMAT |
+| **[37]** | A manifest altered after it was written is caught by the chain that covers it |
 
 If any of that fails on your machine, do not use this, and please tell us:
 **<hello@cnfworks.com>**.
@@ -300,17 +301,30 @@ because a verification nobody has time to run is a verification nobody runs. It
 is also what almost every offload tool writes, so manifests interchange cleanly.
 
 Some archives and delivery specs mandate a particular algorithm by name, so the
-checksum is a per-day setting: **xxHash64**, **MD5** or **SHA-1**. Per day
-rather than global, because a manifest covers a day's worth of files and every
-hash in it has to be the same kind of thing.
+checksum is a per-day setting: **xxHash64**, **xxHash128**, **xxHash3**,
+**MD5**, **SHA-1** or **C4 ID**. Per day rather than global, because a manifest
+covers a day's worth of files and every hash in it has to be the same kind of
+thing.
+
+Which manifests you get depends on the choice, and the interface says so before
+you make it:
+
+| Checksum | ASC MHL 1.1 | ASC MHL 2.0 |
+|---|---|---|
+| xxHash64 (default) | `<xxhash64be>` | `<xxh64>` |
+| MD5 | `<md5>` | `<md5>` |
+| SHA-1 | `<sha1>` | `<sha1>` |
+| xxHash128 | — | `<xxh128>` |
+| xxHash3 | — | `<xxh3>` |
+| C4 ID | — | `<c4>` |
 
 Two rules:
 
-- **The manifest never mislabels a digest.** The offered list is the
-  intersection of what this program can compute and what the ASC MHL 1.1 schema
-  can truthfully name. An algorithm written under a neighbouring element name
-  would be a manifest that lies about its own contents, which is worse than no
-  manifest. The list grows when the manifest format does, not before.
+- **The manifest never mislabels a digest.** Each entry above is the name that
+  schema actually defines for that algorithm, and a dash means that schema has
+  no name for it — so no 1.1 file is written at all, rather than one written
+  under a neighbouring element name. A manifest that lies about its own
+  contents is worse than no manifest.
 - **A card keeps the checksum it started with.** Changing it on a day that has
   already copied files is refused — half a card hashed one way and half the
   other is not a resumable state, and nobody can write a manifest for it.
@@ -338,11 +352,11 @@ The rules it holds to:
 
 - **Renaming happens on the destination. The card is never written to.** A
   rename on a card is an edit to the only copy in existence.
-- **The manifest records both names.** The MHL's `<file>` carries the name the
-  file was written under, an XML comment above each hash carries the name it
-  had on the card, and a `_NAMES.csv` beside the manifest is the
-  machine-readable map. The MHL stays valid against the ASC MHL 1.1 schema,
-  which does not allow extra elements — a manifest Silverstack or ShotPut
+- **The manifest records both names.** ASC MHL 2.0 has an element for it:
+  `<path>` is the name the file was written under and `<previousPath>` is the
+  name it had on the card. ASC MHL 1.1 has no such element and does not allow
+  extra ones, so there the old name goes in an XML comment above each hash plus
+  a `_NAMES.csv` beside the manifest — a manifest Silverstack or ShotPut
   refuses to read is worse than no manifest.
 - **Sidecars stay with their clip.** Files sharing a stem are renamed as a
   group, so `CLIP.MXF` and `CLIP.XML` never come apart.
@@ -505,7 +519,10 @@ DRIVE_A/
         │   ├── DAY_01_MEDIA.json
         │   ├── README_HANDOFF.txt
         │   └── CHECKSUMS.txt
-        ├── DAY_01_A001.mhl                    # per-card manifest
+        ├── ascmhl/                            # ASC MHL 2.0
+        │   ├── 0001_A001_2026-01-20_193000Z.mhl
+        │   └── ascmhl_chain.xml
+        ├── DAY_01_A001.mhl                    # ASC MHL 1.1, same facts
         └── REPORTS/ingest_DAY_01.html
 ```
 
@@ -513,10 +530,22 @@ The card's own directory structure is preserved inside the roll folder. Canon's
 `CONTENTS/CLIPS001` tree carries clip metadata that some tools expect to find
 next to the MXF, so it is not flattened.
 
-The `.mhl` is an original-format MHL 1.1 XML manifest using XXHash64. It is only
-written after the complete card is green on every required destination. If this
-application vanishes, the manifest remains human-readable and independently
-verifiable.
+Manifests are only written after the complete card is green on every required
+destination. Both formats are rendered from one set of facts in one pass, so
+the two files cannot disagree about what happened.
+
+The `ascmhl/` folder is **ASC MHL 2.0**: one numbered manifest per card, and an
+`ascmhl_chain.xml` that records the C4 ID of every manifest in the folder.
+Alter a manifest afterwards to hide a bad file and the chain no longer matches
+it — Second Hand Smoke says so, in the interface, the next time a card lands on
+that drive, and it neither repairs nor deletes the evidence.
+
+`DAY_ROLL.mhl` is **ASC MHL 1.1**, for the many tools that still expect one. It
+is written whenever the day's checksum is one that 1.1 can name, and skipped —
+never faked — when it is not.
+
+If this application vanishes, both remain human-readable and independently
+verifiable, and both are readable by Pomfort's reference `ascmhl` tool.
 
 ---
 
@@ -682,7 +711,8 @@ out of scope.
 | `db.py` | SQLite schema and connection handling |
 | `cards.py` | Card detection, classification, content fingerprinting |
 | `offload.py` | The copy and verify engine |
-| `reports.py` | Format gate, MHL writer, report data and the HTML report |
+| `reports.py` | Format gate, ASC MHL 1.1 writer, report data and the HTML report |
+| `mhl2.py` | ASC MHL 2.0 manifests, the chain file and the C4 IDs in it |
 | `pdfreport.py` | The branded PDF report, rendered from `reports.day_data()` |
 | `thumbnails.py` | One cached frame per camera clip, for the report |
 | `media.py` | ffprobe metadata and recorder CSV sound-report parsing |

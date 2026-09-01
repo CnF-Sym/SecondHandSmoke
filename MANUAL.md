@@ -173,7 +173,8 @@ and report progress back through a status snapshot the interface polls.
              db.py  ── SQLite catalog (~/SecondHandSmoke/catalog.db)
                 │
                 ▼
-            reports.py ── format gate, MHL manifest, day report
+            reports.py ── format gate, ASC MHL 1.1, day report
+            mhl2.py ───── ASC MHL 2.0, the chain, C4 IDs
 ```
 
 **Threading model.** Flask runs threaded, so several requests can be in flight.
@@ -453,7 +454,8 @@ DRIVE_A/
         ├── SOUND/CRACK_R01/…
         ├── PROXY/A001/A001C001_…_PXY.mov
         ├── HANDOFF/…
-        ├── DAY_01_A001.mhl
+        ├── ascmhl/                           ← ASC MHL 2.0 + chain
+        ├── DAY_01_A001.mhl                   ← ASC MHL 1.1
         └── REPORTS/ingest_DAY_01.html
 ```
 
@@ -725,6 +727,74 @@ Paths are relative to the `.mhl` file's own folder. Silverstack, ShotPut and
 Resolve's clone tool all read this. If this application disappears tomorrow, the
 manifest remains human-readable and independently verifiable.
 
+This file is written only when the day's checksum is one ASC MHL 1.1 can name —
+xxHash64, MD5 or SHA-1. For xxHash128, xxHash3 and C4 the 1.1 schema has no
+element, so no 1.1 file is written rather than one written under a name that
+does not mean what it says. The 2.0 folder below covers all six.
+
+### 14.2.1 ASC MHL 2.0 — `ascmhl/`
+
+Written from the same call and the same rows as the 1.1 file above, by
+`mhl2.write()`, at `PROJECT/DAY/ascmhl/`. Always written, for every algorithm.
+
+```
+PROJECT_01/DAY_01/ascmhl/
+├── 0001_A001_2026-01-20_193000Z.mhl
+├── 0002_CRACK_R01_2026-01-20_201500Z.mhl
+└── ascmhl_chain.xml
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<hashlist version="2.0" xmlns="urn:ASC:MHL:v2.0">
+  <creatorinfo>
+    <creationdate>…</creationdate>
+    <hostname>…</hostname>
+    <tool version="1.0">Second Hand Smoke</tool>
+    <author>…</author>            <!-- DIT_OPERATOR, or the login account -->
+    <comment>PROJECT_01 / DAY_01 / A001 to RAID_A</comment>
+  </creatorinfo>
+  <processinfo>
+    <process>transfer</process>   <!-- read on one volume, written to another -->
+    <ignore/>
+  </processinfo>
+  <hashes>
+    <hash>
+      <path size="1234567" lastmodificationdate="…">CAMERA/A001/…/A001C001.MXF</path>
+      <xxh128 action="original" hashdate="…">…</xxh128>
+      <previousPath>PRIVATE/M4ROOT/CLIP/C0001.MP4</previousPath>
+    </hash>
+  </hashes>
+</hashlist>
+```
+
+`action="original"` because every digest here was taken off the card during the
+copy that produced the file, not recomputed from the destination afterwards.
+
+**No root hash.** A directory hash covers everything under the root, and this
+program writes one card at a time into a day folder that other cards are still
+landing in — a root hash written after the first card would be wrong before the
+second finished. `<processinfo>` carries none, which is valid and true.
+
+**`ascmhl_chain.xml`** records the C4 ID of every manifest in the folder:
+
+```xml
+<ascmhldirectory xmlns="urn:ASC:MHL:DIRECTORY:v2.0">
+  <hashlist sequencenr="1">
+    <path>0001_A001_2026-01-20_193000Z.mhl</path>
+    <c4>c4…</c4>
+  </hashlist>
+</ascmhldirectory>
+```
+
+Before appending a generation, every manifest the chain already covers is
+re-hashed. A manifest that no longer matches the C4 ID recorded for it has been
+changed since it was written; that is reported in the interface and **nothing is
+repaired, rewritten or deleted** — silently fixing it is the one thing a chain
+must never do. Generations only accumulate. Re-running a manifest write for a
+card that has not changed adds nothing, so re-reading the drives does not pile
+up generations that differ only in their clock reading.
+
 ### 14.3 Day report — `REPORTS/ingest_DAY_01.html`
 
 A self-contained HTML page written to the primary destination and served live at
@@ -866,7 +936,7 @@ must be `application/json` and must come from the tool's own origin.
 | `POST` | `/api/cancel` | Stop whatever job is running, safely |
 | `GET` | `/api/card/<card>/status` | The live format-gate answer for one card |
 | `POST` | `/api/card/<card>/analyze` | Re-read metadata and sound reports |
-| `POST` | `/api/card/<card>/manifest` | Write the MHL to every destination |
+| `POST` | `/api/card/<card>/manifest` | Write every manifest format to every destination. Returns `paths` and `warnings` |
 
 ### Phases and reporting
 
@@ -978,7 +1048,9 @@ the HTML report. `pdfreport.py` renders the same structure. Nothing after
 | `invalidate_gate_cache(card_id=None)` | Drop cached answers |
 | `_device_map(card_id)` | Destination id → physical drive identity |
 | `_live_gap(f, dest_path, dest_root)` | Is this verified copy still on a connected drive at the right size? |
-| `write_mhl(card_id, destination_id)` | The MHL 1.1 manifest |
+| `manifest_data(card_id, destination_id)` | The facts both manifest formats are rendered from |
+| `write_manifests(card_id, destination_id)` | Writes every format this day's checksum can be named in |
+| `write_mhl(card_id, destination_id)` | Renders ASC MHL 1.1, or `None` if 1.1 cannot name the digest |
 | `day_report(day_id)` | Returns `(path, html)` and writes the page to the primary drive |
 
 ### `media.py` — metadata and sound reports
@@ -1089,15 +1161,26 @@ the two-drive requirement.
 |---|---|
 | `ALGORITHMS` | The offered set: what we can compute *and* an MHL can name |
 | `normalise(algo)` | Falls back to xxHash64, what older rows were hashed with |
-| `mhl_element(algo)` | The element name the manifest must use for this digest |
+| `mhl_element(algo)` | The ASC MHL 1.1 element name, or `None` if 1.1 has none |
+| `mhl2_element(algo)` | The ASC MHL 2.0 element name. Every algorithm has one |
+| `manifests_for(algo)` | Which manifest formats this choice will actually produce |
 | `choices()` | The list the interface offers, with notes |
 | `new(algo)` | A fresh hasher |
 
-The offered list is deliberately the intersection of what this program can
-compute and what the ASC MHL 1.1 schema can truthfully name. An algorithm
-written into a manifest under a neighbouring element name is a manifest that
-lies about its own contents, and that is worse than not offering the algorithm.
-The list grows when the manifest format does.
+No manifest ever names a digest something it is not. An algorithm written under
+a neighbouring element name is a manifest that lies about its own contents, and
+that is worse than not offering the algorithm at all. So each entry carries the
+element name each schema defines for it and `None` where that schema defines
+none: 1.1 names five digests, 2.0 names six. xxHash128, xxHash3 and C4 are
+therefore offered — 2.0 can name them — and a day using one gets a full 2.0
+`ascmhl/` folder and no 1.1 sidecar. `manifests_for()` is what the interface
+says out loud before the choice is made, so nobody discovers it afterwards.
+
+The C4 encoder lives here too, because the 2.0 chain file identifies every
+manifest by its C4 ID whatever the media is hashed with. It is SHA-512
+re-encoded in base58 and padded to 90 characters, cross-checked byte-for-byte
+against Pomfort's reference `ascmhl` implementation, with two pinned vectors in
+section [37] of the rig.
 
 The setting belongs to the shoot day, and `offload._algo_changed()` refuses to
 change it once a card has copies. `reports.write_mhl()` refuses to write a
@@ -1134,7 +1217,7 @@ reason.
 |---|---|
 | `register(path, label)` | Records a drive by volume identity, not mount point |
 | `known_drives()` | The registry, with online state and what each drive holds |
-| `read_manifest(path)` | Parses any ASC MHL 1.1 manifest — ours or another tool's |
+| `read_manifest(path)` | Parses any ASC MHL manifest, 1.1 or 2.0 — ours or another tool's |
 | `start(mode, path, ...)` | `speed` or `index`; runs through the same job gate |
 | `forget(drive_id)` | Removes a drive from the registry; touches no drive |
 
