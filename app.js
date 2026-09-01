@@ -119,6 +119,10 @@ async function cancelJob() {
 async function manifest(id) {
   const j = await api(`/api/card/${id}/manifest`, { method: "POST" });
   toast(`Wrote ${j.paths.length} manifest file(s)`);
+  // A chain warning means a manifest already on that drive has been altered
+  // since it was written. It is the whole reason the chain exists, so it gets
+  // its own message rather than being folded into the count above.
+  (j.warnings || []).forEach(w => toast(w, true));
 }
 
 async function analyze(id) {
@@ -509,8 +513,13 @@ function renderChecksum(state) {
   }
   if (document.activeElement !== select) select.value = checksum.current || "xxh64";
   const chosen = choices.find(c => c.id === (checksum.current || "xxh64"));
+  // Say which manifests a choice actually produces. XXH3, XXH128 and C4 have
+  // no element name in ASC MHL 1.1, so a day using one gets the 2.0 ascmhl
+  // folder and no 1.1 sidecar — which is a thing to know before the shoot, not
+  // after it.
   $("checksumNote").textContent = chosen
-    ? `${chosen.note} Written into the manifest as <${chosen.mhl_element}>.`
+    ? `${chosen.note} Written as <${chosen.mhl2_element}> in `
+      + `${(chosen.manifests || []).join(" and ")}.`
     : "";
 }
 

@@ -687,10 +687,18 @@ def manifest(card_id):
     if not gate["safe"]:
         return jsonify(error=f"Manifest blocked: {gate['reason']}"), 400
     dests = db.q("SELECT * FROM destinations WHERE day_id=?", (card["day_id"],))
-    written = [p for p in (reports.write_mhl(card_id, d["id"]) for d in dests) if p]
+    written, warnings = [], []
+    for d in dests:
+        result = reports.write_manifests(card_id, d["id"])
+        written += result["paths"]
+        warnings += result["warnings"]
     if not written:
         return jsonify(error="Nothing verified yet — no manifest to write"), 400
-    return jsonify(ok=True, paths=written)
+    # A warning here means a manifest already on the drive no longer matches
+    # the chain that covers it. The new manifest still got written — refusing
+    # to write it would lose today's work over yesterday's problem — but this
+    # has to reach a human rather than sit in a log.
+    return jsonify(ok=True, paths=written, warnings=warnings)
 
 
 @app.get("/api/drives")

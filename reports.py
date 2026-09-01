@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 import db
 import handoff
 import hashing
+import mhl2
 import sync
 import thumbnails
 import version
@@ -264,7 +265,19 @@ def _live_gap(f, dest_path, dest_root=None):
 # --------------------------------------------------------------------------
 # MHL
 
-def write_mhl(card_id, destination_id):
+def manifest_data(card_id, destination_id):
+    """Everything a manifest needs to say, gathered once.
+
+    Two manifest formats are written from this: ASC MHL 1.1 by `write_mhl`
+    below, ASC MHL 2.0 by `mhl2.write`. They read the same rows, resolve the
+    same paths and quote the same digests, so the two files sitting beside each
+    other on the drive cannot disagree about what happened — the same reason
+    the day report renders once as HTML and once as PDF from `day_data`.
+
+    Returns None when there is no honest manifest to write: nothing verified,
+    something still outstanding, or a card whose files were hashed with two
+    different algorithms.
+    """
     card = db.q1("SELECT * FROM cards WHERE id=?", (card_id,))
     day = db.q1("SELECT * FROM days WHERE id=?", (card["day_id"],))
     dest = db.q1("SELECT * FROM destinations WHERE id=?", (destination_id,))
@@ -293,20 +306,86 @@ def write_mhl(card_id, destination_id):
         return None
 
     root = os.path.join(dest["path"], day["project"], day["name"])
+    entries = []
+    for r in rows:
+        rel = os.path.relpath(r["dest_path"], root)
+        source_name = os.path.basename(r["rel_path"])
+        entries.append({
+            "rel": rel,
+            "posix": rel.replace(os.sep, "/"),
+            "size": r["size"],
+            "modified": datetime.fromtimestamp(r["mtime"], timezone.utc).isoformat(),
+            "digest": r["src_hash"],
+            "hashdate": r["updated_at"],
+            "source_rel": r["rel_path"],
+            "source_name": source_name,
+            "renamed": source_name != os.path.basename(rel),
+        })
+    return {
+        "card": card, "day": day, "dest": dest,
+        "root": root,
+        "roll": card["roll"] or card["label"],
+        "algo": algos.pop(),
+        "entries": entries,
+        "skipped": [{"rel_path": s["rel_path"], "size": s["size"]} for s in skipped],
+        "operator": OPERATOR_NAME,
+        "username": getpass.getuser(),
+        "hostname": socket.gethostname(),
+        "stamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def write_manifests(card_id, destination_id):
+    """Write every manifest format this card's checksum can be named in.
+
+    ASC MHL 2.0 is always written: it has an element name for all six of the
+    algorithms on offer. ASC MHL 1.1 is written as well whenever 1.1 has a name
+    for the digest, because plenty of post houses still hand their .mhl to a
+    tool that predates 2.0 — but it is never written by inventing one.
+    """
+    data = manifest_data(card_id, destination_id)
+    if not data:
+        return {"paths": [], "warnings": []}
+    paths = []
+    legacy = write_mhl(card_id, destination_id, data=data)
+    if legacy:
+        paths.append(legacy)
+    result = mhl2.write(data)
+    paths.append(result["path"])
+    return {"paths": paths, "warnings": result["warnings"]}
+
+
+def write_mhl(card_id, destination_id, data=None):
+    """Render ASC MHL 1.1, or return None if 1.1 cannot name this digest."""
+    if data is None:
+        data = manifest_data(card_id, destination_id)
+    if not data:
+        return None
+    element = hashing.mhl_element(data["algo"])
+    if not element:
+        # XXH3, XXH128 and C4 have no element name in the 1.1 schema. Writing
+        # one of them under a neighbouring name would produce a manifest that
+        # verifies as garbage in every other tool. The 2.0 folder carries them
+        # honestly; this format does not get a lie to keep it company.
+        return None
+
+    card, day, dest = data["card"], data["day"], data["dest"]
+    root = data["root"]
     os.makedirs(root, exist_ok=True)
-    out_path = os.path.join(root, f"{day['name']}_{card['roll'] or card['label']}.mhl")
+    out_path = os.path.join(root, f"{day['name']}_{data['roll']}.mhl")
+    skipped = data["skipped"]
 
     def esc(s):
         return html.escape(str(s), quote=True)
 
-    stamp = datetime.now(timezone.utc).isoformat()
+    stamp = data["stamp"]
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<hashlist version="1.1">',
         '  <creatorinfo>',
-        f'    <name>{esc(OPERATOR_NAME)}</name>',
-        f'    <username>{esc(getpass.getuser())}</username>',
-        f'    <hostname>{esc(socket.gethostname())}</hostname>',
+        f'    <name>{esc(data["operator"])}</name>',
+        f'    <username>{esc(data["username"])}</username>',
+        f'    <hostname>{esc(data["hostname"])}</hostname>',
         f'    <tool>{esc(version.TOOL_STRING)}</tool>',
         f'    <startdate>{stamp}</startdate>',
         f'    <finishdate>{stamp}</finishdate>',
@@ -321,27 +400,24 @@ def write_mhl(card_id, destination_id):
                      f'not copied and are not covered by this manifest. '
                      f'They are listed in the _EXCLUDED.csv beside this file. -->')
     renamed = []
-    for r in rows:
-        rel = os.path.relpath(r["dest_path"], root)
-        mod = datetime.fromtimestamp(r["mtime"], timezone.utc).isoformat()
-        source_name = os.path.basename(r["rel_path"])
-        if source_name != os.path.basename(rel):
-            renamed.append((r["rel_path"], rel, r["size"], r["src_hash"]))
+    for entry in data["entries"]:
+        rel = entry["rel"]
+        if entry["renamed"]:
+            renamed.append((entry["source_rel"], rel, entry["size"], entry["digest"]))
             # A comment, not an element. The ASC MHL 1.1 schema defines <hash>
             # as an xs:sequence with no xs:any, so an extra child would make
             # this manifest schema-invalid — and a manifest Silverstack or
             # ShotPut refuses to read is worse than no manifest. A comment is
             # legal anywhere, ignored by every parser, and still tells a human
             # reading the file what this thing used to be called.
-            lines.append(f'  <!-- source: {esc(source_name)} -->')
+            lines.append(f'  <!-- source: {esc(entry["source_name"])} -->')
         lines += [
             '  <hash>',
             f'    <file>{esc(rel)}</file>',
-            f'    <size>{r["size"]}</size>',
-            f'    <lastmodificationdate>{mod}</lastmodificationdate>',
-            f'    <{hashing.mhl_element(r["hash_algo"])}>{esc(r["src_hash"])}'
-            f'</{hashing.mhl_element(r["hash_algo"])}>',
-            f'    <hashdate>{esc(r["updated_at"])}</hashdate>',
+            f'    <size>{entry["size"]}</size>',
+            f'    <lastmodificationdate>{entry["modified"]}</lastmodificationdate>',
+            f'    <{element}>{esc(entry["digest"])}</{element}>',
+            f'    <hashdate>{esc(entry["hashdate"])}</hashdate>',
             '  </hash>',
         ]
     lines.append('</hashlist>')
@@ -378,7 +454,9 @@ def write_mhl(card_id, destination_id):
         partial_names = names_path + ".partial"
         with open(partial_names, "w", encoding="utf-8", newline="") as fh:
             writer = csv.writer(fh)
-            writer.writerow(["original", "renamed", "size", "xxhash64be"])
+            # The digest column is named for what is actually in it. It used
+            # to say xxhash64be whatever the day was set to.
+            writer.writerow(["original", "renamed", "size", element])
             for source_rel, dest_rel, size, digest in renamed:
                 writer.writerow([source_rel, dest_rel, size, digest])
             fh.flush()
