@@ -34,6 +34,7 @@ import db
 import handoff
 import hashing
 import mhl2
+import storage
 import sync
 import thumbnails
 import version
@@ -105,11 +106,9 @@ def _device_map(card_id):
            WHERE c.id=?""", (card_id,))
     out = {}
     for row in rows:
-        # A destination we never positively identified is keyed by its own id
-        # rather than merged with the others, so a catalog written by an older
-        # build is never made *less* safe than it was; it simply does not gain
-        # the collapsing behaviour until the next job re-identifies its drive.
-        key = row["device_id"] or f"unidentified:{row['id']}"
+        # storage.drive_key is the single definition of "one physical drive",
+        # shared with the library so the two cannot answer differently.
+        key = storage.drive_key(row["device_id"], row["id"])
         out[row["id"]] = {"key": key, "root": row["path"], "label": row["label"]}
     return out
 

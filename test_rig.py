@@ -3046,5 +3046,226 @@ check("and the two files say exactly the same thing about the same files",
       json.dumps([legacy_facts, modern_facts]))
 
 
+print("\n[38] the library answers questions and changes nothing")
+
+import library
+
+# --- read-only, proven the way [30] and [34] prove it -------------------
+# Every claim the library makes is about things that already happened. If
+# asking a question can change an answer, the answer was never worth having.
+
+
+def catalog_dump():
+    return json.dumps(
+        {table: [dict(row) for row in db.q(f"SELECT * FROM {table} ORDER BY id")]
+         for table in ("days", "cards", "files", "copies", "destinations")},
+        sort_keys=True, default=str)
+
+
+def cards_dump():
+    out = []
+    for folder, _, names in os.walk(CARDS):
+        for name in sorted(names):
+            full = os.path.join(folder, name)
+            try:
+                stat = os.stat(full)
+            except OSError:
+                continue
+            out.append((os.path.relpath(full, CARDS), stat.st_size,
+                        round(stat.st_mtime, 3)))
+    return sorted(out)
+
+
+before_catalog = catalog_dump()
+before_cards = cards_dump()
+before_gates = {row["id"]: reports.card_status(row["id"])["stamp"]["label"]
+                for row in db.q("SELECT id FROM cards ORDER BY id")}
+
+everything = library.search(limit=library.MAX_PAGE)
+with_presence = library.search(limit=library.MAX_PAGE, check_presence=True)
+on_record = library.audit(3, "record")
+right_now = library.audit(2, "present")
+singles = library.only_copy()
+registry = library.drives()
+library.export(on_record, "csv")
+library.export(with_presence, "json")
+
+check("the catalog is byte-identical after every library question",
+      catalog_dump() == before_catalog)
+check("every source card is untouched", cards_dump() == before_cards)
+check("no card's verdict moved",
+      {row["id"]: reports.card_status(row["id"])["stamp"]["label"]
+       for row in db.q("SELECT id FROM cards ORDER BY id")} == before_gates)
+
+library_source = open("library.py", encoding="utf-8").read()
+check("library.py never writes to the catalog",
+      "db.ex(" not in library_source)
+check("and never calls the format gate itself",
+      "card_status" not in library_source)
+check("it never re-checksums — a size check does not get to borrow the word",
+      "hash_file" not in library_source and "hashing" not in library_source)
+
+# --- one definition of "a physical drive" ------------------------------
+# Two answers to "how many drives is this on" is one answer too many, and the
+# quieter one would be the wrong one.
+storage_source = open("storage.py", encoding="utf-8").read()
+reports_source = open("reports.py", encoding="utf-8").read()
+check("storage owns the drive-identity rule", "def drive_key(" in storage_source)
+check("the format gate uses it", "storage.drive_key(" in reports_source)
+check("the library counts drives by the same rule",
+      "storage.DRIVE_KEY_SQL" in library_source)
+check("and an unidentified destination is still never merged with another",
+      storage.drive_key(None, 7) != storage.drive_key(None, 8)
+      and storage.drive_key("disk:x", 7) == storage.drive_key("disk:x", 8))
+
+# --- two numbers, never one --------------------------------------------
+check("a search finds the whole catalog, not one day",
+      len({row["day_id"] for row in everything["rows"]}) > 1,
+      sorted({row["day_name"] for row in everything["rows"]}))
+check("without asking, presence is not checked — and is not reported as zero",
+      all(row["present_drives"] is None for row in everything["rows"]))
+check("when it is checked, present is never higher than verified",
+      all(row["present_drives"] <= row["verified_drives"]
+          for row in with_presence["rows"]),
+      json.dumps([(r["rel_path"], r["verified_drives"], r["present_drives"])
+                  for r in with_presence["rows"]
+                  if r["present_drives"] > r["verified_drives"]]))
+check("a file this program verified on two drives says so",
+      any(row["verified_drives"] >= 2 for row in everything["rows"]))
+
+# --- the archive question ----------------------------------------------
+check("the on-record audit is complete without a single drive connected",
+      on_record["complete"] and not on_record["drives_offline"])
+check("it finds files below the threshold", on_record["count"] > 0)
+check("and every row it returns really is below it",
+      all(row["verified_drives"] < 3 for row in on_record["rows"]))
+check("nothing verified on two drives shows up in a search for fewer than two",
+      all(row["verified_drives"] < 2 for row in singles["rows"]))
+
+# --- files a filter deliberately skipped --------------------------------
+# They were never meant to be on a drive. Counting them as missing copies
+# would bury a real answer under a list of thumbnails somebody chose to skip.
+excluded_paths = {row["rel_path"] for row in
+                  db.q("SELECT rel_path FROM files WHERE COALESCE(excluded,0)=1")}
+check("there are deliberately-excluded files to test with", bool(excluded_paths))
+check("the audit does not report them as missing copies",
+      not (excluded_paths & {row["rel_path"] for row in on_record["rows"]}),
+      json.dumps(sorted(excluded_paths)))
+check("but they can be asked for on purpose",
+      excluded_paths & {row["rel_path"] for row in
+                        library.search({"include_excluded": True},
+                                       limit=library.MAX_PAGE)["rows"]})
+
+# --- the shelf question -------------------------------------------------
+check("the right-now audit names every drive that did not answer",
+      isinstance(right_now["drives_offline"], list))
+check("and an answer with a drive offline is never called complete",
+      right_now["complete"] == (not right_now["drives_offline"]))
+
+# A drive that is genuinely not there.
+real_inspect = storage.inspect_path
+
+
+def one_drive_offline(path):
+    if storage.paths_overlap(storage.canonical(DRIVE_B), storage.canonical(path)):
+        raise storage.StorageError(f"Not a mounted folder: {path}")
+    return real_inspect(path)
+
+
+storage.inspect_path = one_drive_offline
+try:
+    shelved = library.audit(2, "present")
+finally:
+    storage.inspect_path = real_inspect
+check("a shelved drive is named as not checked, not counted as missing",
+      "DRIVE_B" in shelved["drives_offline"], json.dumps(shelved["drives_offline"]))
+check("and that answer says out loud that it is incomplete",
+      shelved["complete"] is False)
+check("a file on two drives with one shelved reads as verified 2, present 1",
+      any(row["verified_drives"] >= 2 and row["present_drives"] == 1
+          for row in shelved["rows"]),
+      json.dumps([(r["rel_path"], r["verified_drives"], r["present_drives"])
+                  for r in shelved["rows"]][:4]))
+
+# Nothing connected at all is not the same as nothing being there.
+def all_drives_offline(path):
+    raise storage.StorageError(f"Not a mounted folder: {path}")
+
+
+storage.inspect_path = all_drives_offline
+try:
+    blind = library.audit(2, "present")
+finally:
+    storage.inspect_path = real_inspect
+check("with nothing plugged in the library refuses to call everything missing",
+      blind["nothing_checked"] and blind["count"] == 0,
+      json.dumps({"checked": not blind["nothing_checked"], "rows": blind["count"]}))
+check("and says so rather than returning an empty result that looks clean",
+      blind["complete"] is False)
+
+# A different disk at a familiar mount point is not one of your backups.
+def imposter(path):
+    info = real_inspect(path)
+    if storage.paths_overlap(storage.canonical(DRIVE_B), storage.canonical(path)):
+        info["device_id"] = "test:somebody-elses-disk"
+    return info
+
+
+storage.inspect_path = imposter
+try:
+    swapped = library.audit(2, "present")
+finally:
+    storage.inspect_path = real_inspect
+check("a different drive mounted at a familiar path is not counted as a copy",
+      "DRIVE_B" in swapped["drives_offline"], json.dumps(swapped["drives_offline"]))
+
+# --- searching ----------------------------------------------------------
+by_roll = library.search({"text": "A001"}, limit=library.MAX_PAGE)
+check("a search matches on the roll", by_roll["total"] > 0)
+check("and every row it returns really does match",
+      all("A001" in json.dumps(dict(row)) for row in by_roll["rows"]))
+check("a search for something that is not there returns nothing, not everything",
+      library.search({"text": "no-such-clip-anywhere"})["total"] == 0)
+check("a search cannot smuggle SQL into the query",
+      library.search({"text": "'; DROP TABLE files; --"})["total"] == 0
+      and db.q1("SELECT COUNT(*) c FROM files")["c"] > 0)
+check("only known field names reach the database",
+      library.search({"; DELETE FROM copies": "x"})["total"] == everything["total"]
+      and db.q1("SELECT COUNT(*) c FROM copies")["c"] > 0)
+check("a page announces itself as a page rather than looking complete",
+      library.search(limit=1)["truncated"] is True)
+
+# --- the drive registry -------------------------------------------------
+check("the registry separates what we verified from what an index found",
+      all("catalog_files" in row and "indexed_files" in row
+          for row in registry["drives"]),
+      json.dumps([{k: row.get(k) for k in ("label", "catalog_files",
+                                           "indexed_files")}
+                  for row in registry["drives"]]))
+
+# --- getting it out of here ---------------------------------------------
+csv_text, csv_type = library.export(on_record, "csv")
+check("the CSV export is a CSV", csv_type == "text/csv")
+check("it carries both numbers as separate columns",
+      "verified_drives" in csv_text and "present_drives_at_export" in csv_text)
+check("and stamps when it was true", on_record["as_at"] in csv_text)
+json_text, json_type = library.export(shelved, "json")
+check("the JSON export is JSON", json_type == "application/json")
+exported = json.loads(json_text)
+check("it carries the drives that were not checked",
+      exported["drives_offline"] == shelved["drives_offline"])
+check("and does not present an incomplete answer as a complete one",
+      exported["complete"] is False)
+check("the export names the build that made it",
+      exported["tool"] == version.TOOL_STRING)
+
+# --- and after all of that, still nothing moved -------------------------
+check("the catalog is still byte-identical", catalog_dump() == before_catalog)
+check("the source cards are still untouched", cards_dump() == before_cards)
+check("and every format-gate verdict is still what it was",
+      {row["id"]: reports.card_status(row["id"])["stamp"]["label"]
+       for row in db.q("SELECT id FROM cards ORDER BY id")} == before_gates)
+
+
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

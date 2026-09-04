@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **400 checks across 37 sections**. The ones that matter most:
+More than **400 checks across 38 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -57,6 +57,7 @@ More than **400 checks across 37 sections**. The ones that matter most:
 | **[19]** | Two folders on one physical drive count as one, and cross-site requests are refused |
 | **[33]** | A card with filtered files can never read plain SAFE TO FORMAT |
 | **[37]** | A manifest altered after it was written is caught by the chain that covers it |
+| **[38]** | The library changes nothing, and never reports an unchecked drive as an empty one |
 
 If any of that fails on your machine, do not use this, and please tell us:
 **<hello@cnfworks.com>**.
@@ -503,6 +504,66 @@ checksum puts it there.
 
 ---
 
+## Library
+
+Every offload tool forgets your footage the moment the copy finishes. This one
+already knows every file, every hash, every drive it was written to — the
+library is the part that lets you ask, across every shoot day at once.
+
+Search by roll, scene, take, camera, codec, clip name or date. Then the
+question worth asking:
+
+> **Show me every clip on fewer than three physical drives.**
+
+**Every row shows two numbers, and they are not the same claim.**
+
+- **Verified** — how many separate physical drives this file was read back and
+  checksum-matched on. A fact from the catalog. True whether or not anything is
+  plugged in, and complete the moment you ask.
+- **Present** — how many of those drives are connected *right now* and still
+  have a file of the right size at the right path.
+
+Present is never higher than verified, and the gap is the point. `3 verified ·
+1 present` is a healthy row: two drives are on a shelf, which is where drives
+are supposed to be. `3 verified · 0 present` when you thought all three were
+plugged in is the thing you would otherwise find out about a year later.
+
+So the audit asks you which question you meant:
+
+- **on record** — which clips never got their third copy in the first place.
+  Complete, instant, works with nothing connected.
+- **right now** — which clips cannot be confirmed on three drives today. Needs
+  the drives connected, and names every registered drive that was offline so
+  that *could not check* is never mistaken for *not there*. If nothing is
+  connected at all, it says so rather than reporting your entire library as
+  missing.
+
+Three things the library will not do:
+
+- **Present is a size check, not a checksum.** Re-verifying a shelved drive is
+  a real job with a progress bar. Quietly doing a cheap `stat` and calling the
+  result verified would be exactly the weakening this program exists to refuse,
+  so the interface says *a file of the right size is at that path*, in those
+  words.
+- **It never changes anything.** No writes to the catalog, no call to the
+  format gate, no source card opened. A card's clearance is the gate's answer
+  at the moment you ask it, never something a search moved.
+- **It counts drives the way the format gate does** — one shared definition, so
+  the program cannot end up with two different answers to "how many drives is
+  this on".
+
+Export to CSV or JSON, carrying both numbers, the drives that were offline, and
+when it was true. A library that only exists inside this application is a
+library that dies with it.
+
+**The catch, said plainly:** this is a library of what *this program* copied.
+Footage dragged across in the Finder is not in it. Drive indexing reads anyone's
+ASC MHL manifest, so a drive offloaded by another tool can still tell you what
+it holds — it just cannot tell you it was verified, because this program did
+not verify it.
+
+---
+
 ## Output layout
 
 ```
@@ -713,6 +774,7 @@ out of scope.
 | `offload.py` | The copy and verify engine |
 | `reports.py` | Format gate, ASC MHL 1.1 writer, report data and the HTML report |
 | `mhl2.py` | ASC MHL 2.0 manifests, the chain file and the C4 IDs in it |
+| `library.py` | Search, the copy-count audit and export. Read-only |
 | `pdfreport.py` | The branded PDF report, rendered from `reports.day_data()` |
 | `thumbnails.py` | One cached frame per camera clip, for the report |
 | `media.py` | ffprobe metadata and recorder CSV sound-report parsing |

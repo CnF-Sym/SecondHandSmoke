@@ -685,6 +685,110 @@ async function driveIndex() {
   refresh();
 }
 
+// -- the library -----------------------------------------------------------
+// Read-only, and the interface has to keep saying so. Nothing in here can
+// change a card's verdict; the numbers it shows are two different claims with
+// two different strengths, and they are never merged into one.
+
+let libraryLast = null;
+
+function libraryQuery() {
+  const text = $("librarySearchBox").value.trim();
+  return text ? { text } : {};
+}
+
+function libraryCount(row) {
+  const verified = row.verified_drives;
+  const tone = verified === 0 ? "bad" : (verified === 1 ? "warn" : "ok");
+  let out = `<span class="${tone}">${verified} verified</span>`;
+  if (row.present_drives === null || row.present_drives === undefined) {
+    // Never render an unchecked drive as zero. "Not checked" is its own state.
+    out += ` <span class="dim">· present not checked</span>`;
+  } else {
+    out += ` <span class="dim">· ${row.present_drives} present`
+        + (row.drives_checked === 0 ? " (no drives connected)" : "") + `</span>`;
+  }
+  return out;
+}
+
+function libraryRender(result, heading) {
+  libraryLast = result;
+  $("libraryExportRow").hidden = !result.rows.length;
+  const status = $("libraryStatus");
+  const bits = [heading];
+  if (result.truncated) {
+    bits.push(`showing ${result.shown} of ${result.total} — narrow the search`);
+  }
+  if (result.nothing_checked) {
+    // Not one drive answered. "No" is not the truthful answer to "is it on
+    // three drives right now" when nothing was there to ask.
+    bits.push(`<span class="warn">No registered drive was connected, so nothing
+      could be checked. This is not a result.</span>`);
+  } else if ((result.drives_offline || []).length) {
+    // The difference between "not there" and "could not look" is the whole
+    // reason this feature can be trusted. It gets its own sentence.
+    bits.push(`<span class="warn">Not checked: ${
+      result.drives_offline.map(esc).join(", ")} ${
+      result.drives_offline.length === 1 ? "was" : "were"} offline. `
+      + `This answer is incomplete.</span>`);
+  }
+  bits.push(`<span class="dim">as at ${esc(result.as_at)}</span>`);
+  status.innerHTML = bits.filter(Boolean).join(" · ");
+  status.hidden = false;
+
+  if (!result.rows.length) {
+    $("libraryList").innerHTML = `<p class="empty">${result.nothing_checked
+      ? "Plug a drive in and ask again." : "Nothing matched."}</p>`;
+    return;
+  }
+  $("libraryList").innerHTML = `<div class="list">` + result.rows.map(r => {
+    const slate = [r.scene && `sc ${esc(r.scene)}`, r.take_name && `tk ${esc(r.take_name)}`,
+                   r.reel_name && esc(r.reel_name), r.codec_name && esc(r.codec_name)]
+      .filter(Boolean).join(" · ");
+    return `<div class="row">
+      <div class="grow">
+        <div>${esc(r.rel_path.split("/").pop())}</div>
+        <div class="path">${esc(r.project)} / ${esc(r.day_name)} / ${esc(r.roll || r.card_label)}${
+          slate ? " · " + slate : ""}</div>
+      </div>
+      <div class="nowrap">${bytes(r.size)}</div>
+      <div class="nowrap">${libraryCount(r)}</div>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+async function librarySearch() {
+  const j = await api("/api/library/search", { method: "POST",
+    body: JSON.stringify({ ...libraryQuery(), check_presence: false }) });
+  libraryRender(j, `${j.total} file(s)`);
+}
+
+async function libraryAudit(mode) {
+  const minimum = parseInt($("libraryMin").value, 10) || 3;
+  if (mode === "present") {
+    toast("Checking every connected drive — this reads sizes, not checksums.");
+  }
+  const j = await api("/api/library/audit", { method: "POST",
+    body: JSON.stringify({ ...libraryQuery(), minimum, mode }) });
+  libraryRender(j, j.nothing_checked ? "" : (mode === "record"
+    ? `${j.count} file(s) on fewer than ${minimum} drives on record`
+    : `${j.count} file(s) not confirmed on ${minimum} drives right now`));
+}
+
+function libraryExport(format) {
+  if (!libraryLast) return toast("Run a search or an audit first.", true);
+  // A navigation, not a fetch: fetch() cannot hand the browser a file. The
+  // route is a GET for that reason, which also means it never goes near the
+  // application/json rule that keeps other sites out of this API.
+  const params = new URLSearchParams({ ...libraryQuery(), format });
+  if (libraryLast.mode) {
+    params.set("audit", "1");
+    params.set("mode", libraryLast.mode);
+    params.set("minimum", libraryLast.minimum);
+  }
+  window.location = "/api/library/export?" + params.toString();
+}
+
 async function forgetDrive(id) {
   await api(`/api/drive/${id}`, { method: "DELETE" });
   toast("Forgotten from the registry. Nothing on the drive was touched.");

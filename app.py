@@ -38,6 +38,7 @@ import destinations
 import drivetools
 import handoff
 import hashing
+import library
 import media
 import naming
 import offload
@@ -699,6 +700,77 @@ def manifest(card_id):
     # to write it would lose today's work over yesterday's problem — but this
     # has to reach a human rather than sit in a log.
     return jsonify(ok=True, paths=written, warnings=warnings)
+
+
+# --------------------------------------------------------------------------
+# The library. Read-only, every one of them: these routes answer questions
+# about what the catalog already recorded. None of them writes anything, and
+# none of them calls the format gate — a card's clearance is the gate's answer
+# at the moment you ask it, not something a search can move.
+
+
+def _library_query(body):
+    """Pull only the fields the library knows about out of a request body."""
+    query = {name: body.get(name) for name in library.FIELDS if body.get(name)}
+    for extra in ("text", "date_from", "date_to", "sort", "direction",
+                  "include_excluded"):
+        if body.get(extra):
+            query[extra] = body[extra]
+    return query
+
+
+@app.post("/api/library/search")
+def library_search():
+    body = request.get_json(silent=True) or {}
+    return jsonify(library.search(
+        _library_query(body),
+        limit=body.get("limit") or library.PAGE,
+        offset=body.get("offset") or 0,
+        check_presence=bool(body.get("check_presence"))))
+
+
+@app.post("/api/library/audit")
+def library_audit():
+    body = request.get_json(silent=True) or {}
+    mode = "present" if body.get("mode") == "present" else "record"
+    try:
+        minimum = int(body.get("minimum") or reports.MIN_VERIFIED_COPIES)
+    except (TypeError, ValueError):
+        return jsonify(error="How many drives? Give a whole number."), 400
+    if minimum < 1:
+        return jsonify(error="A file has to be on at least one drive to "
+                             "count as anywhere."), 400
+    return jsonify(library.audit(minimum, mode, _library_query(body)))
+
+
+@app.get("/api/library/drives")
+def library_drives():
+    return jsonify(library.drives())
+
+
+@app.get("/api/library/export")
+def library_export():
+    # A GET, deliberately. A download is a browser navigation, and fetch()
+    # cannot hand the browser a file — so the alternative was a cross-origin-
+    # capable form POST, which would mean loosening the application/json rule
+    # that stops a page on the internet POSTing here at all. Nothing about an
+    # export changes state, so GET is both the honest verb and the one that
+    # leaves that guard exactly as it is.
+    body = request.args
+    fmt = "json" if body.get("format") == "json" else "csv"
+    if body.get("audit"):
+        result = library.audit(body.get("minimum"),
+                               "present" if body.get("mode") == "present"
+                               else "record",
+                               _library_query(body))
+    else:
+        result = library.search(_library_query(body), limit=library.MAX_PAGE,
+                                check_presence=body.get("check_presence") == "1")
+    payload, mimetype = library.export(result, fmt)
+    stamp = result["as_at"].replace(":", "").replace("-", "")
+    name = f"library_{stamp}.{fmt}"
+    return Response(payload, mimetype=mimetype, headers={
+        "Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @app.get("/api/drives")

@@ -148,6 +148,29 @@ def inspect_path(path, _depth=0):
     }
 
 
+def drive_key(device_id, destination_id):
+    """One physical drive, as a string two callers can compare.
+
+    Two folders, two partitions, an alias, or a disk image and the drive its
+    backing file sits on are all one place for a copy to die, and
+    ``inspect_path`` resolves all of them to one ``device_id``. This turns that
+    into the key the format gate groups by — and now the library too, so the
+    program cannot end up with two different answers to "how many drives is
+    this file on".
+
+    A destination that was never positively identified is keyed by its own row
+    id rather than merged with the others, so a catalog written by an older
+    build is never made *less* safe than it was: it simply does not gain the
+    collapsing behaviour until the next job re-identifies its drive.
+    """
+    return device_id or f"unidentified:{destination_id}"
+
+
+# The same rule as SQL, for queries that have to count drives in the database
+# rather than in Python. Kept beside drive_key() so the two cannot drift.
+DRIVE_KEY_SQL = "COALESCE({device_id}, 'unidentified:' || {destination_id})"
+
+
 def paths_overlap(first, second):
     first = canonical(first)
     second = canonical(second)

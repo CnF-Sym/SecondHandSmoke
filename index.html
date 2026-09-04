@@ -201,6 +201,44 @@
       <div id="cardList"><p class="empty">Nothing registered yet.</p></div>
     </section>
 
+    <section class="panel" id="libraryPanel">
+      <h2>Library</h2>
+      <p class="note">Everything this program has ever copied, across every
+        shoot day. Read-only: searching here never changes a card's verdict.</p>
+
+      <div class="field-row">
+        <input id="librarySearchBox" placeholder="Roll, scene, take, camera, clip name…"
+               onkeydown="if(event.key==='Enter')librarySearch()">
+        <button class="btn ghost" onclick="librarySearch()">Search</button>
+      </div>
+
+      <p class="note">Every row shows two numbers.
+        <b>Verified</b> is how many separate physical drives the file was read
+        back and checksum-matched on — a fact from the catalog, true whether or
+        not anything is plugged in. <b>Present</b> is how many of those drives
+        are connected right now and still have a file of the right size at the
+        right path. Present is a size check, not a checksum, and it is never
+        higher than verified. Two verified and none present just means the
+        drives are on a shelf.</p>
+
+      <div class="field-row">
+        <label class="field-label" for="libraryMin">On fewer than</label>
+        <input id="libraryMin" type="number" min="1" max="9" value="3"
+               style="max-width:64px">
+        <label class="field-label">drives</label>
+        <button class="btn ghost" onclick="libraryAudit('record')">on record</button>
+        <button class="btn ghost" onclick="libraryAudit('present')">right now</button>
+      </div>
+
+      <p class="note" id="libraryStatus" hidden></p>
+      <div id="libraryList"><p class="empty">Search, or run an audit.</p></div>
+
+      <div class="field-row" id="libraryExportRow" hidden>
+        <button class="btn ghost sm" onclick="libraryExport('csv')">Export CSV</button>
+        <button class="btn ghost sm" onclick="libraryExport('json')">Export JSON</button>
+      </div>
+    </section>
+
     <section class="panel" id="drivePanel">
       <h2>Drive tools</h2>
       <p class="note">How fast is this drive, and what is already on it. The

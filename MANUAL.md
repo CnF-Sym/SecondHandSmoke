@@ -175,6 +175,7 @@ and report progress back through a status snapshot the interface polls.
                 ▼
             reports.py ── format gate, ASC MHL 1.1, day report
             mhl2.py ───── ASC MHL 2.0, the chain, C4 IDs
+            library.py ── search, copy-count audit, export (read-only)
 ```
 
 **Threading model.** Flask runs threaded, so several requests can be in flight.
@@ -1210,6 +1211,54 @@ across a cancel and a resume, and a rename that came out differently the second
 time would copy a second file beside the first while the gate counted both.
 `{index}` is computed from the card's groups in sorted order for the same
 reason.
+
+### `library.py` — search, audit and export
+
+| Function | Purpose |
+|---|---|
+| `search(query, limit, offset, check_presence)` | Everything matching, newest shoot day first |
+| `audit(minimum, mode, query)` | Files below N drives. `mode` is `record` or `present` |
+| `only_copy(query)` | Files on exactly one physical drive, on record |
+| `drives()` | Every registered drive, with catalog and index counts kept apart |
+| `export(result, fmt)` | CSV or JSON, carrying both counts and the "as at" stamp |
+| `Presence` | Which registered drives answered, cached for one request |
+
+**Two numbers, never one.** The catalog knows what happened, not what is true
+right now. It knows a file was read back off two drives with the cache bypassed
+and the checksums matched; it does not know that drive is still readable, still
+has the file, or still exists. So every row carries `verified_drives` (from the
+catalog) *and* `present_drives` (from the filesystem, counted only for drives
+that answered). `present_drives` is `None` — never `0` — when presence was not
+checked, and the interface renders that as "not checked".
+
+**`present` is `os.stat`, not a checksum.** Re-verifying a shelved drive is a
+real job with a progress bar, subject to the job gate. Nothing here re-hashes
+anything, and nothing here calls a size check "verified".
+
+**Nothing checked is not nothing there.** If no registered drive answered, the
+`present` audit returns `nothing_checked: True` and zero rows, rather than
+reporting every file in the library as missing.
+
+**Filters are an allow-list.** `library.FIELDS` maps a fixed set of names to
+their SQL. Nothing else reaches the database, and every value is a bound
+parameter.
+
+**Deliberately excluded files are out of the audit by default.** A file a
+filter skipped was never meant to be on a drive; counting it as a missing copy
+would bury a real answer. `include_excluded` asks for them on purpose.
+
+**Read-only, proven.** No `db.ex`. No call to `card_status`. No source card
+opened. Section [38] of the rig dumps the catalog, the source card trees and
+every format-gate verdict before and after running every function in this
+module, and requires all three to be byte-identical.
+
+**Routes.** `POST /api/library/search`, `POST /api/library/audit`,
+`GET /api/library/drives`, `GET /api/library/export`. The export is a GET
+because a download is a browser navigation and `fetch()` cannot hand the
+browser a file — the alternative was a form POST, which would have meant
+loosening the `application/json` rule that keeps other sites out of this API.
+Nothing about an export changes state, so GET is both the honest verb and the
+one that leaves that guard alone.
 
 ### `drivetools.py` — speed tests, indexing and the drive registry
 
