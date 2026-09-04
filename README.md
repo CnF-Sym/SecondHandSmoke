@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **400 checks across 38 sections**. The ones that matter most:
+More than **500 checks across 38 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -235,9 +235,13 @@ do next and why. Click any step to jump to its panel.
 5. Wait for the slate's lamp to turn green — **SAFE TO FORMAT**. **Write
    manifest.** Only then does the card go back in the bag as clear. The gate
    also does a live check of every verified copy on any drive that's still
-   connected, so a file that gets altered or a drive that gets swapped after
-   verification reopens the gate immediately rather than staying stale until
-   the next manual re-read.
+   connected, so a file that gets **deleted, truncated or changed in size**, or
+   a drive that gets swapped after verification, reopens the gate immediately
+   rather than staying stale until the next manual re-read. That check is a
+   `stat`, not a checksum — **same-size corruption is not caught by it** and
+   needs **Re-read drives**, which reads every byte back with the cache
+   bypassed. It is a cheap tripwire between full re-reads, not a substitute
+   for one.
 6. Once camera and sound metadata are present, hit **Sync day's footage**.
    Clean matches, sequential sound takes, ambiguous overlaps and missing
    timing metadata are reported explicitly. Re-run it after any metadata
@@ -759,7 +763,8 @@ the interface marks Phase 6 unavailable while every earlier phase still works.
 | 4 | Timecode sync from BWF `bext` + camera start TC | **Done** |
 | 5 | Waveform cross-correlation fallback | **Done** |
 | 6 | Dailies export, Resolve handoff | **Done** |
-| 7 | The library — search and locate footage months later | **Next** |
+| 7 | The library — search, copy-count audit, export | **Done** |
+| — | A real card, a real shoot, a notarized build | **Next** |
 
 `ROADMAP.md` has the detail on where this goes next and what is deliberately
 out of scope.

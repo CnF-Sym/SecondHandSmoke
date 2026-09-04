@@ -4,34 +4,51 @@
 
 ## Where this is going
 
-### Next: the library
+### Shipped in 0.4.0: the library
 
 Every offload tool forgets your footage the moment the copy finishes. The
-catalog already knows every file, every hash and every destination it was
-written to — it just doesn't let you ask it anything after the shoot wraps.
+catalog always knew every file, every hash and every destination — now it
+answers questions about them, across every shoot day at once.
 
-Planned:
+- **Search across the whole show.** Project, day, roll, scene, take, camera,
+  codec, clip name, date.
+- **Drive registry** with stable identity and your own label, so *"which drive
+  is Tuesday's A-cam on"* is a question with an answer.
+- **Online / offline status**, without a re-scan.
+- **Copy-count audit** — *"every clip that exists on fewer than three physical
+  drives"*, in two honest modes: on record, and confirmed right now.
+- **Export** to CSV or JSON, so the library survives this application.
 
-- **Search across the whole show**, not one day at a time. Project, day, roll,
-  scene, take, camera, codec, date.
-- **Drive registry.** Every destination gets a stable identity and a label you
-  choose ("SHOW_A_01"). The catalog remembers which drive each verified copy
-  lives on, so *"which drive is Tuesday's A-cam on"* is a question with an
-  answer.
-- **Online / offline status.** Plug a drive in and the library shows you what
-  it holds and what it is missing, without a full re-scan.
-- **Re-verify on demand, per drive.** Rot checking a shelved drive a year later
-  is the same code path as `Re-read drives` today; it needs a home in the UI
-  that isn't tied to an open shoot day.
-- **Copy-count audit.** "Show me every clip that currently exists on fewer than
-  three physical drives." That is the question that saves a show.
+### Next: a real card, and a way for people to get it
+
+The code is ahead of the release. What is missing is not features.
+
+- **Run it on real cards.** Every one of 521 checks runs against fixtures the
+  test rig wrote. That proves the logic. It does not prove an FX9 card mounts
+  the way the scanner expects, or that a 512 GB offload hits nothing a 24 KB
+  fixture never could. This is the largest open question in the project and no
+  amount of further code closes it.
+- **Notarize the build.** Ad-hoc signing means right-click → Open on first
+  launch. A Developer ID turns this from a repository into an application
+  somebody can install at 4am without thinking about it.
+- **Publish a release** people can download, with the manual and the rig's
+  output beside it.
+- **Camera and recorder coverage**, driven by what people actually send in.
+
+### Still to come
+
+- **Re-verify a shelved drive on demand**, per drive, from the library rather
+  than from an open shoot day. The library says which copies are *on record*
+  but unconfirmed; turning that into a real re-read job with a progress bar is
+  the natural next step, and deliberately not something a cheap size check is
+  ever allowed to stand in for.
+- **Directory checksums.** ASC MHL 2.0 has `<directoryhash>`, so this is now
+  reachable. It needs a design decision first: per-roll, not per-root, because
+  a day folder is still being written to when a card clears.
 
 ### After that, probably
 
-- Camera and recorder coverage — more card layouts detected correctly out of
-  the box, driven by what people actually send in.
 - A headless CLI, so the whole offload can run from a script or a cron job.
-- Export the library to CSV/JSON so it survives this application.
 - Windows and Linux support. The blocker is honest: verification depends on
   macOS `F_NOCACHE` to bypass the page cache. `O_DIRECT` on Linux and
   `FILE_FLAG_NO_BUFFERING` on Windows are the equivalents, and each needs its

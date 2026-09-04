@@ -2739,6 +2739,34 @@ else:
     check("the README's count of checks and sections is stated in a checkable way",
           False, "the phrasing changed; update this test with it")
 
+# The manual drifts silently: nothing breaks when it goes stale, so nothing
+# tells you. It claimed version 0.1.0 and nineteen sections for three releases
+# running. For a program whose whole argument is that it is precise about what
+# it promises, a document that overclaims is the same failure as code that does.
+manual_text = open("MANUAL.md", encoding="utf-8").read()
+check("the manual states the version this build actually is",
+      f"Version {version.VERSION} " in manual_text,
+      _re.search(r"^Version \S+", manual_text, _re.M).group(0)
+      if _re.search(r"^Version \S+", manual_text, _re.M) else "no version line")
+manual_sections = _re.search(r"\*\*(\d+) checks across (\d+) sections\*\*|"
+                             r"(Nineteen|Twenty|Thirty|Thirty-eight|Forty) sections",
+                             manual_text)
+check("and does not claim a section count that is no longer true",
+      "Nineteen sections" not in manual_text
+      and f"{len(sections)} sections" in manual_text.replace("Thirty-eight", "38"),
+      manual_sections.group(0) if manual_sections else "no section count stated")
+
+# The live gate stats. It does not hash. Anything that says otherwise is
+# promising a check this program does not perform between full re-reads.
+overclaims = ("a file that gets altered", "truncated or replaced after verification")
+for document, text in (("README.md", readme_text), ("MANUAL.md", manual_text)):
+    for phrase in overclaims:
+        check(f"{document} does not claim the live check catches more than a stat can see",
+              phrase not in text, phrase)
+for document, text in (("README.md", readme_text), ("MANUAL.md", manual_text)):
+    check(f"{document} says out loud that same-size corruption needs a full re-read",
+          "same-size corruption" in text.lower())
+
 print("\n[36] the checksum is a choice, and the manifest never lies about it")
 
 import hashing

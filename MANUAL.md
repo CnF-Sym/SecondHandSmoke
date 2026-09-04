@@ -3,7 +3,7 @@
 
 *A CnF Works Project*
 
-Version 0.1.0 — read from the `VERSION` file at the repository root.
+Version 0.4.0 — read from the `VERSION` file at the repository root.
 `version.py` and the macOS build scripts both read that one file, so the
 number in the manual, in the app's Info.plist and in every MHL `<tool>`
 field cannot drift apart.
@@ -106,11 +106,22 @@ beginning/middle/end content samples. The complete inventory is checked again
 before and after the offload. New, changed, unreadable or skipped files close the
 format gate.
 
-**7. Verification is re-checked live.** Every time the gate is evaluated it stats
-each verified copy on every drive that is still connected. A file deleted,
-truncated or replaced after verification reopens the gate immediately, without
-waiting for a manual re-read. A drive that has been disconnected is not penalised
-— its earlier verification still counts.
+**7. Verification is re-checked live — as far as a stat can see.** Every time
+the gate is evaluated it **stats** each verified copy on every drive that is
+still connected. A file **deleted, truncated, or changed in size** after
+verification reopens the gate immediately, without waiting for a manual re-read.
+A drive that has been disconnected is not penalised — its earlier verification
+still counts.
+
+**What this check does not catch: same-size corruption.** A `stat` reads the
+size and the modification time; it does not read the bytes. A file whose
+contents rotted or were overwritten with something the same length still passes
+the live check, and is only caught by **Re-read drives**, which reads every byte
+back with the page cache bypassed and compares checksums. The live check is a
+cheap tripwire between full re-reads, not a substitute for one. Section [18] of
+the rig proves what it does catch — a truncation on a connected drive reopening
+the gate immediately — and section [8] proves the full re-read catches the rot
+that the tripwire cannot.
 
 ### About the hash
 
@@ -1393,7 +1404,8 @@ offloads them, then deliberately changes the source and corrupts, truncates and
 deletes destination files to confirm each fault is caught. It never touches
 mounted media. Set `DIT_KEEP_TEST_RIG=1` to keep the temp folder for inspection.
 
-Nineteen sections, covering: registration and identity, the copy and verify path,
+Thirty-eight sections and more than 500 checks, covering: registration and
+identity, the copy and verify path,
 corruption and rot, cancellation and resume for all four job types, the format
 gate, MHL and day report, metadata and sound reports, timecode sync across every
 outcome, waveform acceptance and refusal, proxies, the handoff package, and a
