@@ -28,6 +28,7 @@ catches bad cables, dying cards, half-written files and bit rot roughly
 ten times faster than MD5, which is the entire job.
 """
 
+import concurrent.futures
 import fcntl
 import os
 import shutil
@@ -71,16 +72,25 @@ def _open_uncached(path, mode="rb", require_uncached=False):
     return f
 
 
-def hash_file(path, progress=None, require_uncached=False, algo=None):
+def hash_file(path, progress=None, require_uncached=False, algo=None,
+              should_stop=None):
     """Checksum a file with the page cache bypassed.
 
     `algo` defaults to xxHash64, which is what every internal check in this
     program uses. Media hashing passes the shoot day's chosen algorithm.
+
+    `should_stop` is checked between chunks and raises JobCancelled. Without
+    it, cancelling during a read-back had to wait for the whole file: fine for
+    a rig fixture, minutes for a 100 GB camera file on a tired drive. Cancel
+    is a promise that the program stops promptly, and a promise that only
+    holds on small files is not one.
     """
     h = hashing.new(algo or hashing.DEFAULT)
     done = 0
     with _open_uncached(path, require_uncached=require_uncached) as f:
         while True:
+            if should_stop is not None and should_stop():
+                raise JobCancelled()
             chunk = f.read(CHUNK)
             if not chunk:
                 break
@@ -407,6 +417,15 @@ class Job:
         self.plan = {}
         self.algo = hashing.DEFAULT
         self.cancel = threading.Event()
+        # bytes_done is now incremented from several read-back threads at
+        # once, and `+=` is a read-modify-write. Without this the progress bar
+        # loses ticks and appears to stall on a job that is running fine.
+        self._progress_lock = threading.Lock()
+        # Reused for the life of the job rather than one pool per file: each
+        # worker thread gets its own SQLite connection from db.conn(), and
+        # opening one of those per file per drive would cost more than the
+        # parallelism wins back.
+        self._readers = None
         self.job_row = None
         self.started_epoch = None
         self.finished_epoch = None
@@ -428,7 +447,17 @@ class Job:
 
     # -- progress helpers -------------------------------------------------
     def _tick(self, n):
-        self.bytes_done += n
+        with self._progress_lock:
+            self.bytes_done += n
+
+    def _close_readers(self):
+        """Let the read-back threads go, and their catalog connections with
+        them. Safe to call twice; called from the normal end of a job and
+        again from run()'s finally, so a cancelled or failed job does not
+        leave threads behind."""
+        pool, self._readers = self._readers, None
+        if pool is not None:
+            pool.shutdown(wait=True)
 
     def run(self):
         self.started_epoch = time.time()
@@ -452,6 +481,9 @@ class Job:
             self.errors.append(traceback.format_exc(limit=3))
             db.ex("UPDATE cards SET status='failed' WHERE id=?", (self.card_id,))
         finally:
+            # A cancelled or crashed job leaves the pool up otherwise, and its
+            # threads hold open catalog connections.
+            self._close_readers()
             self.finished_epoch = time.time()
             if self.job_row:
                 db.ex("UPDATE jobs SET state=?, message=?, finished_at=? WHERE id=?",
@@ -606,13 +638,13 @@ class Job:
                       (src_hash, self.algo, f["id"]))
 
             self.phase = "Verifying"
-            for d, dp in targets:
-                if self.cancel.is_set():
-                    raise JobCancelled()
-                self._verify(f, d, dp, src_hash)
+            if self.cancel.is_set():
+                raise JobCancelled()
+            self._verify_all(f, targets, src_hash)
 
             self.files_done += 1
 
+        self._close_readers()
         self.phase = "Finished"
         self.current_file = ""
         if self.mode == "offload" and not self.errors:
@@ -721,6 +753,59 @@ class Job:
                 )
         return h.hexdigest()
 
+    def _verify_all(self, f, targets, src_hash):
+        """Read every destination back at the same time, not one after another.
+
+        This program refuses to start unless the destinations are physically
+        distinct drives — that is rule three of the safety contract. So reading
+        them simultaneously is not two jobs fighting over one spindle; it is
+        one job finally using the hardware the rule already required. The
+        read-back is the slowest part of an offload and it was queueing behind
+        itself for no reason.
+
+        **Nothing about what is checked changes.** Each destination is still
+        read byte for byte with the page cache bypassed, still hashed with the
+        day's algorithm, still compared against the digest taken off the card,
+        and still writes its own catalog row. `_verify` is called unmodified;
+        this only decides when.
+
+        Two threads and one drive would be a real slowdown, so a single
+        destination stays on this thread.
+
+        Cancellation reaches inside the read: every worker checks the job's
+        cancel flag between chunks, so pressing stop during a 100 GB file
+        stops during that file rather than after it. A cancelled read-back is
+        never recorded as a failed copy — the drive did nothing wrong — and a
+        verify writes no catalog row until it has an answer, so the catalog is
+        in the same state whether the job finished or was stopped.
+        """
+        if len(targets) < 2:
+            return [self._verify(f, d, dp, src_hash) for d, dp in targets]
+        if self._readers is None:
+            self._readers = concurrent.futures.ThreadPoolExecutor(
+                max_workers=8, thread_name_prefix="shs-verify")
+        futures = [self._readers.submit(self._verify, f, d, dp, src_hash)
+                   for d, dp in targets]
+        # Wait for every one of them. A destination that raises something
+        # _verify did not catch must not be silently dropped: it becomes an
+        # error on the job, which closes the format gate, which is the
+        # conservative answer.
+        results, cancelled = [], False
+        for future in futures:
+            try:
+                results.append(future.result())
+            except JobCancelled:
+                # Wait for the others rather than returning while they are
+                # still reading, then raise once. They are cancelling too.
+                cancelled = True
+                results.append(False)
+            except Exception as exc:
+                self.errors.append(f"{f['rel_path']}: read-back failed — {exc}")
+                results.append(False)
+        if cancelled:
+            raise JobCancelled()
+        return results
+
     def _verify(self, f, dest, dest_path, src_hash):
         try:
             if not os.path.exists(dest_path):
@@ -731,9 +816,15 @@ class Job:
             got, _ = hash_file(
                 dest_path, progress=self._tick,
                 require_uncached=(sys.platform == "darwin"), algo=self.algo,
+                should_stop=self.cancel.is_set,
             )
             if got != src_hash:
                 raise ValueError(f"checksum mismatch: {got} vs {src_hash}")
+        except JobCancelled:
+            # A cancelled read-back is not a bad copy. Recording it as failed
+            # would leave the catalog claiming a drive misbehaved because
+            # somebody pressed stop, and that lie would outlive the job.
+            raise
         except Exception as e:
             self.errors.append(f"{f['rel_path']} @ {dest['label']}: {e}")
             db.ex("""INSERT INTO copies (file_id, destination_id, dest_path, state, error, updated_at)
