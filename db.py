@@ -420,7 +420,108 @@ def setting(key, value=None):
     return value
 
 
+# --------------------------------------------------------------------------
+# Keeping the catalog
+
+
+BACKUP_KEEP = 7
+
+
+def backup_dir():
+    return os.path.join(os.path.dirname(DB_PATH), "backups")
+
+
+def integrity():
+    """Ask SQLite whether the catalog is intact.
+
+    Returns (ok, detail). A corrupt catalog does not endanger footage — the
+    media and the manifests are on the drives, and the format gate reads the
+    catalog rather than the other way round — but it does lose the library,
+    the gate's history and every sync decision, and somebody should find that
+    out at startup rather than six months later.
+    """
+    try:
+        rows = conn().execute("PRAGMA integrity_check").fetchall()
+    except sqlite3.Error as exc:
+        return False, str(exc)
+    detail = "; ".join(str(row[0]) for row in rows)
+    return detail == "ok", detail
+
+
+def backup(reason="manual"):
+    """A consistent copy of the catalog, taken through SQLite itself.
+
+    `sqlite3.Connection.backup` copies a live database correctly; `cp` on an
+    open one can produce a file that is torn halfway through a write and looks
+    fine until the day somebody needs it. The whole point of a backup is that
+    it is trustworthy on the worst day, so it is taken the safe way or not at
+    all.
+    """
+    folder = backup_dir()
+    os.makedirs(folder, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+    path = os.path.join(folder, f"catalog_{stamp}_{reason}.db")
+    partial = path + ".partial"
+    target = sqlite3.connect(partial)
+    try:
+        with target:
+            conn().backup(target)
+    finally:
+        target.close()
+    os.replace(partial, path)
+    prune_backups()
+    return path
+
+
+def prune_backups(keep=BACKUP_KEEP):
+    folder = backup_dir()
+    try:
+        found = sorted(name for name in os.listdir(folder)
+                       if name.startswith("catalog_") and name.endswith(".db"))
+    except OSError:
+        return []
+    # Oldest first, so the newest `keep` survive.
+    for name in found[:-keep] if keep else found:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
+    return [os.path.join(folder, name) for name in found[-keep:]] if keep else []
+
+
+def backups():
+    folder = backup_dir()
+    try:
+        names = sorted((name for name in os.listdir(folder)
+                        if name.startswith("catalog_") and name.endswith(".db")),
+                       reverse=True)
+    except OSError:
+        return []
+    out = []
+    for name in names:
+        full = os.path.join(folder, name)
+        try:
+            stat = os.stat(full)
+        except OSError:
+            continue
+        out.append({"name": name, "path": full, "bytes": stat.st_size,
+                    "taken_at": datetime.fromtimestamp(
+                        stat.st_mtime, timezone.utc).isoformat(timespec="seconds")})
+    return out
+
+
 def init():
+    # A migration is the one moment this program rewrites the catalog's shape.
+    # If a column add goes wrong on somebody's disk, the version before it is
+    # the only way back — and nobody takes a backup before an upgrade they did
+    # not know was happening.
+    if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH):
+        try:
+            backup("before-upgrade")
+        except Exception:
+            # A backup that cannot be taken must not stop the program starting.
+            # It is reported at startup instead; see server_main.
+            pass
     conn().executescript(SCHEMA)
     _add_column("destinations", "canonical_path", "TEXT")
     _add_column("destinations", "device_id", "TEXT")

@@ -140,7 +140,15 @@ def json_error(exc):
     code = getattr(exc, "code", 500)
     if code == 500:
         app.logger.exception("Unhandled error on %s", request.path)
-        message = "Something went wrong. Check the terminal window for details."
+        # Not "check the terminal": somebody who installed the app by
+        # dragging it to Applications has no terminal window, and telling
+        # them to look at one is telling them there is no help. The app's
+        # own menu has Reveal Server Log in Finder, and the log is where
+        # this exception just went.
+        message = ("Something went wrong. The details are in the server "
+                   "log — the app menu has \u201cReveal Server Log in "
+                   "Finder\u201d, or look in "
+                   "~/Library/Logs/Second Hand Smoke/server.log")
     else:
         message = getattr(exc, "description", str(exc))
     return jsonify(error=message), code
@@ -771,6 +779,35 @@ def library_export():
     name = f"library_{stamp}.{fmt}"
     return Response(payload, mimetype=mimetype, headers={
         "Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --------------------------------------------------------------------------
+# The catalog itself. Losing it does not lose footage — the media and the
+# manifests are on the drives, and the gate reads the catalog rather than the
+# other way round — but it loses the library, the gate's history and every
+# sync decision, and that is worth one button.
+
+
+@app.get("/api/catalog")
+def catalog_state():
+    ok, detail = db.integrity()
+    return jsonify(path=db.DB_PATH, healthy=ok, detail=detail,
+                   backups=db.backups(), folder=db.backup_dir())
+
+
+@app.post("/api/catalog/backup")
+def catalog_backup():
+    if offload.current() or proxies.current() or waveform.current() \
+            or handoff.current() or drivetools.current():
+        # A backup taken mid-job is a snapshot of a half-written state. It
+        # would still be readable, and it would still be wrong.
+        return jsonify(error="A job is running. Take the backup when it "
+                             "finishes."), 409
+    try:
+        path = db.backup("manual")
+    except Exception as exc:
+        return jsonify(error=f"Backup failed: {exc}"), 500
+    return jsonify(ok=True, path=path, backups=db.backups())
 
 
 @app.get("/api/drives")
