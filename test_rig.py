@@ -20,9 +20,12 @@ import csv
 import getpass
 import json
 import os
+import re as _re
 import shutil
+import sqlite3
 import struct
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 from fractions import Fraction
@@ -326,11 +329,50 @@ FAILED = False
 
 
 def check(label, condition, extra=""):
-    global FAILED
+    global FAILED, LAST_SECTION
     print(f"  {'PASS' if condition else 'FAIL'}  {label}" +
           (f"  — {extra}" if extra else ""))
     if not condition:
         FAILED = True
+
+
+# A crash is not a failure, and that is the problem with one.
+#
+# These sections are top-level code, so an exception anywhere ends the run
+# where it stands and every section after it silently never happens. It has
+# now happened twice: a KeyError in [19] hid twelve sections, and a NameError
+# in [27] hid thirteen. Both times the last thing on screen was a wall of
+# PASSes, which is exactly what a healthy run looks like.
+#
+# This cannot stop the crash, but it can stop the crash being quiet. The
+# traceback still prints; this prints after it, saying what did not run.
+def _announce_crash():
+    if not _CRASHED:
+        return
+    print("\n" + "=" * 70)
+    print("THE RIG CRASHED — it did not finish.")
+    print(f"The last section to report was [{LAST_SECTION}]. Every section")
+    print(f"after it did NOT run, so nothing they cover has been checked.")
+    print("A crash is not a pass. Do not read the PASSes above as a clean run.")
+    print("=" * 70 + "\n")
+
+
+_CRASHED = True   # cleared by the normal exit at the bottom of this file
+LAST_SECTION = "none"
+atexit.register(_announce_crash)
+
+
+_print = print
+
+
+def print(*args, **kwargs):          # noqa: A001 - deliberate shadow
+    """Remember the most recent section header, so a crash can name it."""
+    global LAST_SECTION
+    if args and isinstance(args[0], str):
+        match = _re.match(r"\n\[(\d+)\]", args[0])
+        if match:
+            LAST_SECTION = match.group(1)
+    _print(*args, **kwargs)
 
 
 print("\n[1] launch + day + physical destinations")
@@ -1860,9 +1902,27 @@ check("a first run explains what a shoot day even is",
 check("the logo does not out-shout the track",
       ".brand-logo{height:34px" in ui_css)
 
+# Confirmations may fade. Failures may not. Somebody who walked away while a
+# card copied comes back to a clean screen, and a five-second toast is the
+# wrong container for "that card cannot be formatted".
+_js = open("app.js", encoding="utf-8").read()
+_html_ui = open("index.html", encoding="utf-8").read()
+check("a failure never goes to the toast that fades",
+      "if (isErr) return problem(msg);" in _js)
+check("it goes to a panel that stays until somebody dismisses it",
+      'id="problemPanel"' in _html_ui and "dismissAllProblems" in _js)
+check("and assistive technology is told about it as it happens",
+      _re.search(r'id="problemPanel"[^>]*role="alert"', _html_ui) is not None
+      or _re.search(r'role="alert"[^>]*id="problemPanel"', _html_ui) is not None)
+check("the dismiss control says what it dismisses",
+      'aria-label="Dismiss this problem"' in _js)
+check("a failure repeating every poll is counted, not stacked into a wall",
+      "problem-count" in _js)
+check("a failure is never silently swallowed if the panel is missing",
+      "window.alert(msg)" in _js)
+
 print("\n[28] readable at 4am")
 
-import re as _re
 
 
 def _relative_luminance(hex_colour):
@@ -1900,6 +1960,36 @@ for name in ("text", "dim", "dim-2", "safe", "work", "danger", "cyan"):
 if "dim-2" in tokens and "dim" in tokens:
     check("the quieter text colour is genuinely quieter than the main one",
           contrast(tokens["dim-2"], tokens["bg"]) < contrast(tokens["dim"], tokens["bg"]))
+
+# A placeholder is not a label. It disappears the moment somebody types, and a
+# screen reader may never announce it at all. 19 of this interface's 21
+# controls had nothing but a placeholder until an outside review said so.
+_html = open("index.html", encoding="utf-8").read()
+_controls = _re.findall(r'<(?:input|select|textarea)\b[^>]*>', _html)
+_unnamed = []
+for _tag in _controls:
+    _id = _re.search(r'id="([^"]+)"', _tag)
+    if not _id or "aria-label" in _tag:
+        continue
+    if _re.search(r'<label[^>]*for="%s"' % _re.escape(_id.group(1)), _html):
+        continue
+    _unnamed.append(_id.group(1))
+check("every control has a name a screen reader can read, not just a placeholder",
+      not _unnamed, ", ".join(_unnamed))
+
+# Somebody who dragged the app to Applications has no terminal window. Telling
+# them to look at one is telling them there is no help.
+check("no user-facing error sends a packaged user to a terminal window",
+      "the terminal window" not in open("app.py", encoding="utf-8").read())
+check("it points at the server log instead, which the app's own menu opens",
+      "Reveal Server Log" in open("macos/SecondHandSmokeApp.swift",
+                                  encoding="utf-8").read()
+      and "server.log" in open("app.py", encoding="utf-8").read())
+
+# The launch whose log matters is usually the one before this one.
+_swift = open("macos/SecondHandSmokeApp.swift", encoding="utf-8").read()
+check("the server log is rotated, not truncated at every launch",
+      "server.\\(n).log" in _swift and "Keep the last few launches" in _swift)
 
 check("prose is set in a face made for prose",
       "--sans:" in ui_css and "font-family:var(--sans)" in ui_css)
@@ -2720,6 +2810,24 @@ missing = sorted(promised - sections, key=int)
 check("every section the README points at exists", not missing,
       ", ".join(missing))
 
+# And every route this file calls has to exist. A test that calls an endpoint
+# which does not means the test fails for a reason that has nothing to do with
+# the program, and the noise hides whatever it was meant to be checking.
+# Section [39] shipped once calling /api/verify/<card>, which has never
+# existed — the real route is /api/offload/<card>?mode=verify, and two other
+# places in this same file were already using it correctly.
+app_source_routes = open("app.py", encoding="utf-8").read()
+declared_routes = {_re.sub(r"<[^>]*>", "<>", route) for route in
+                   _re.findall(r'@app\.(?:route|get|post|delete|put)\("([^"]+)"',
+                               app_source_routes)}
+called_routes = set(_re.findall(r'(?:post|get)\(f?"(/api/[^"?]*)', rig_source))
+unknown_routes = sorted(
+    url for url in called_routes
+    if _re.sub(r"\{[^}]*\}", "<>", url) not in declared_routes
+    and not _re.search(r"/9{4,}", url))     # deliberate unknown-id 404 tests
+check("every API route this rig calls actually exists in app.py",
+      not unknown_routes, ", ".join(unknown_routes))
+
 check("the README tells people to run it, with the real command",
       ".venv/bin/python test_rig.py" in readme_text
       and "Don't trust it" in readme_text)
@@ -2748,12 +2856,9 @@ check("the manual states the version this build actually is",
       f"Version {version.VERSION} " in manual_text,
       _re.search(r"^Version \S+", manual_text, _re.M).group(0)
       if _re.search(r"^Version \S+", manual_text, _re.M) else "no version line")
-manual_sections = _re.search(r"\*\*(\d+) checks across (\d+) sections\*\*|"
-                             r"(Nineteen|Twenty|Thirty|Thirty-eight|Forty) sections",
-                             manual_text)
+manual_sections = _re.search(r"(\d+|[A-Z][a-z]+(?:-[a-z]+)?) sections", manual_text)
 check("and does not claim a section count that is no longer true",
-      "Nineteen sections" not in manual_text
-      and f"{len(sections)} sections" in manual_text.replace("Thirty-eight", "38"),
+      f"{len(sections)} sections" in manual_text,
       manual_sections.group(0) if manual_sections else "no section count stated")
 
 # The live gate stats. It does not hash. Anything that says otherwise is
@@ -3295,5 +3400,269 @@ check("and every format-gate verdict is still what it was",
        for row in db.q("SELECT id FROM cards ORDER BY id")} == before_gates)
 
 
+print("\n[39] reading every drive at once checks exactly what reading them in turn did")
+
+# The read-back is the slow half of an offload and it used to queue behind
+# itself, one drive after another, even though the program refuses to start
+# unless those drives are physically distinct. Doing them at the same time is
+# free throughput — but only if it checks precisely as much as it did before.
+# Speed that costs a check is not speed, it is a weaker guarantee wearing a
+# faster number, and it is the one trade this program never makes.
+#
+# Everything below is behavioural except one check. Counting occurrences of a
+# method name in the source proves the source contains a string, which is not
+# the same as proving the program does anything, and a test that passes for
+# that reason is worse than no test.
+
+offload_source = open("offload.py", encoding="utf-8").read()
+check("the read-back schedules _verify rather than reimplementing it",
+      "self._readers.submit(self._verify," in offload_source,
+      "a second copy of the verification logic is a second thing to get wrong")
+
+# --- it still catches everything ----------------------------------------
+write_fixture("J001_CARD/CLIPS/J001C001.MXF", 260, 12 * 1024)
+write_fixture("J001_CARD/CLIPS/J001C002.MXF", 261, 12 * 1024)
+write_fixture("J001_CARD/CLIPS/J001C003.MXF", 262, 12 * 1024)
+
+status, body = post("/api/day", project="PROJECT_01", name="DAY_PARALLEL",
+                    shoot_date="2026-01-23")
+par_day = body["day_id"]
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "J001_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+par_card = body["card_id"]
+
+status, body = post(f"/api/offload/{par_card}")
+check("an offload with two destinations runs", status == 200, body)
+wait_job()
+
+gate = reports.card_status(par_card)
+check("the card clears", gate["safe"], gate["reason"])
+par_copies = db.q("""SELECT c.state, c.read_back_hash, d.label
+                     FROM copies c JOIN files f ON f.id = c.file_id
+                     JOIN destinations d ON d.id = c.destination_id
+                     WHERE f.card_id=?""", (par_card,))
+check("every file has a verified row on both drives",
+      len(par_copies) == 6 and all(r["state"] == "verified" for r in par_copies),
+      json.dumps([dict(r) for r in par_copies]))
+check("and every row carries the hash that was actually read back off it",
+      all(row["read_back_hash"] for row in par_copies))
+check("both drives were written and both were recorded",
+      len({row["label"] for row in par_copies}) == 2)
+check("the progress counter did not lose ticks across the threads",
+      offload.status_snapshot()["percent"] >= 99.9,
+      json.dumps({k: offload.status_snapshot()[k]
+                  for k in ("percent", "bytes_done", "bytes_total")}))
+check("no read-back threads are left running after a finished job",
+      not [t for t in threading.enumerate() if t.name.startswith("shs-verify")],
+      ", ".join(t.name for t in threading.enumerate()
+                if t.name.startswith("shs-verify")))
+
+# --- corruption on ONE drive is still caught ----------------------------
+# The failure a parallel read-back could introduce: one thread's answer getting
+# lost behind another's. So corrupt exactly one drive's copy, leave the other
+# perfect, and require the bad one to be named while the good one is untouched.
+par_dest_b = db.q1("SELECT id, path FROM destinations WHERE day_id=? AND role='backup'",
+                   (par_day,))
+par_dest_a = db.q1("SELECT id FROM destinations WHERE day_id=? AND role='primary'",
+                   (par_day,))
+victim = db.q1("""SELECT c.dest_path, f.size FROM copies c
+                  JOIN files f ON f.id = c.file_id
+                  WHERE f.card_id=? AND c.destination_id=? LIMIT 1""",
+               (par_card, par_dest_b["id"]))
+with open(victim["dest_path"], "r+b") as handle:
+    handle.seek(64)
+    handle.write(b"\xDE\xAD\xBE\xEF")
+check("the corruption did not change the file's size",
+      os.path.getsize(victim["dest_path"]) == victim["size"],
+      "a same-size change is the one the read-back exists to catch")
+
+status, body = post(f"/api/offload/{par_card}?mode=verify")
+check("a re-read starts", status == 200, body)
+wait_job()
+
+failed = db.q("""SELECT c.state, c.error, d.label FROM copies c
+                 JOIN files f ON f.id = c.file_id
+                 JOIN destinations d ON d.id = c.destination_id
+                 WHERE f.card_id=? AND c.state='failed'""", (par_card,))
+check("the corrupted copy is caught, reading both drives at once",
+      len(failed) == 1 and "checksum mismatch" in (failed[0]["error"] or ""),
+      json.dumps([dict(r) for r in failed]))
+check("and it is the drive that was actually corrupted",
+      failed and failed[0]["label"] == os.path.basename(DRIVE_B),
+      failed[0]["label"] if failed else "nothing failed")
+check("the good copy on the other drive is untouched by its neighbour's failure",
+      db.q1("""SELECT COUNT(*) c FROM copies cp
+               JOIN files f ON f.id = cp.file_id
+               WHERE f.card_id=? AND cp.destination_id=? AND cp.state='verified'""",
+            (par_card, par_dest_a["id"]))["c"] == 3)
+check("the format gate closes", not reports.card_status(par_card)["safe"],
+      reports.card_status(par_card)["reason"])
+
+post(f"/api/offload/{par_card}")
+wait_job()
+check("re-offloading heals it and the card clears again",
+      reports.card_status(par_card)["safe"],
+      reports.card_status(par_card)["reason"])
+
+# --- cancelling DURING a parallel read-back -----------------------------
+# The earlier version of this test slept for a fixed 50ms and then accepted
+# "done" if the job had already finished. That passes without ever cancelling
+# anything, which makes it worse than no test. This one waits until the job is
+# demonstrably inside the read-back and fails outright if it never got there.
+for index in range(4):
+    write_fixture(f"J002_CARD/CLIPS/J002C00{index}.MXF", 270 + index, 12 * 1024 * 1024)
+status, body = post("/api/day", project="PROJECT_01", name="DAY_PAR_CANCEL",
+                    shoot_date="2026-01-24")
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "J002_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+cancel_card = body["card_id"]
+
+post(f"/api/offload/{cancel_card}")
+deadline = time.time() + 60
+saw_verifying = False
+while time.time() < deadline:
+    snap = offload.status_snapshot()
+    if not offload.current():
+        break
+    if snap and snap.get("phase") == "Verifying":
+        saw_verifying = True
+        break
+    time.sleep(0.005)
+check("the job was caught inside the read-back, so this really tests cancelling one",
+      saw_verifying,
+      "the job finished before the test could reach it — the fixture is too small "
+      "to prove anything about cancellation and this check is the honest failure")
+post("/api/cancel")
+wait_job()
+
+snapshot = offload.status_snapshot()
+check("cancelling during a parallel read-back reports cancelled, not done",
+      snapshot["state"] == "cancelled", json.dumps({"state": snapshot["state"]}))
+check("and leaves no partial files behind on either drive",
+      not [name for drive in (DRIVE_A, DRIVE_B)
+           for _, _, names in os.walk(drive) for name in names
+           if name.endswith(".partial")])
+check("a cancelled card cannot clear",
+      not reports.card_status(cancel_card)["safe"],
+      reports.card_status(cancel_card)["reason"])
+check("a cancelled read-back is never recorded as a failed copy — "
+      "the drive did nothing wrong",
+      not db.q("""SELECT 1 FROM copies c JOIN files f ON f.id = c.file_id
+                  WHERE f.card_id=? AND c.state='failed'""", (cancel_card,)),
+      json.dumps([dict(r) for r in db.q(
+          """SELECT c.state, c.error FROM copies c JOIN files f ON f.id = c.file_id
+             WHERE f.card_id=? AND c.state='failed'""", (cancel_card,))]))
+check("no read-back threads survive a cancelled job",
+      not [t for t in threading.enumerate() if t.name.startswith("shs-verify")],
+      ", ".join(t.name for t in threading.enumerate()
+                if t.name.startswith("shs-verify")))
+check("and the cancelled card finishes cleanly on a second run",
+      (post(f"/api/offload/{cancel_card}"), wait_job(),
+       reports.card_status(cancel_card)["safe"])[2],
+      reports.card_status(cancel_card)["reason"])
+
+
+print("\n[40] the catalog can be backed up, checked, and is never the only copy")
+
+# Losing the catalog does not lose footage: the media and the manifests are on
+# the drives, and the format gate reads the catalog rather than the other way
+# round. It does lose the library, the gate's history and every sync decision,
+# and until now there was no backup, no integrity check and no way back.
+
+ok, detail = db.integrity()
+check("SQLite reports the working catalog intact", ok, detail)
+
+before = len(db.backups())
+backup_path = db.backup("rig")
+check("a backup is written", os.path.isfile(backup_path), backup_path)
+check("and it is listed", len(db.backups()) == before + 1)
+check("it leaves no .partial behind",
+      not [n for n in os.listdir(db.backup_dir()) if n.endswith(".partial")])
+
+# A backup is only worth taking if it is readable and complete.
+restored = sqlite3.connect(backup_path)
+restored.row_factory = sqlite3.Row
+try:
+    check("the backup passes its own integrity check",
+          [row[0] for row in restored.execute("PRAGMA integrity_check")] == ["ok"])
+    for table in ("cards", "files", "copies", "destinations", "days"):
+        live = db.q1(f"SELECT COUNT(*) c FROM {table}")["c"]
+        copied = restored.execute(f"SELECT COUNT(*) c FROM {table}").fetchone()["c"]
+        check(f"the backup carries every row of {table}", live == copied,
+              f"{live} live vs {copied} in the backup")
+    check("and the rows are the same rows, not merely the same number",
+          [dict(r) for r in restored.execute(
+              "SELECT * FROM copies ORDER BY id")] ==
+          [dict(r) for r in db.q("SELECT * FROM copies ORDER BY id")])
+finally:
+    restored.close()
+
+# Old backups must not fill somebody's disk, and the newest must never be the
+# one thrown away.
+made = [backup_path]
+for _ in range(db.BACKUP_KEEP + 2):
+    time.sleep(1.05)   # the filename carries whole seconds
+    made.append(db.backup("rig"))
+kept = {b["name"] for b in db.backups()}
+check(f"only the newest {db.BACKUP_KEEP} backups are kept",
+      len(kept) == db.BACKUP_KEEP, f"{len(kept)} kept")
+check("and the newest one is among them",
+      os.path.basename(made[-1]) in kept)
+check("the oldest was the one removed",
+      os.path.basename(made[0]) not in kept)
+
+# Over HTTP, and never during a job.
+status, body = get("/api/catalog")
+check("the interface can read the catalog's health", status == 200 and body["healthy"],
+      json.dumps({k: body.get(k) for k in ("healthy", "detail")}))
+check("and is told where the backups live", body["folder"] == db.backup_dir())
+status, body = post("/api/catalog/backup")
+check("a backup can be taken from the interface", status == 200, body)
+
+# A backup taken halfway through a job is a snapshot of a half-written state.
+# It would still be readable, and it would still be wrong.
+write_fixture("K001_CARD/CLIPS/K001C001.MXF", 280, 6 * 1024 * 1024)
+write_fixture("K001_CARD/CLIPS/K001C002.MXF", 281, 6 * 1024 * 1024)
+status, body = post("/api/day", project="PROJECT_01", name="DAY_BACKUP",
+                    shoot_date="2026-01-25")
+for path, role in ((DRIVE_A, "primary"), (DRIVE_B, "backup")):
+    post("/api/destination", path=path, label=os.path.basename(path), role=role)
+status, found = get("/api/scan")
+fingerprint = next((c_["fingerprint"] for c_ in found["cards"]
+                    if "K001_CARD" in c_["path"]), None)
+status, body = post("/api/register", fingerprint=fingerprint)
+backup_card = body["card_id"]
+post(f"/api/offload/{backup_card}")
+status, body = post("/api/catalog/backup")
+check("a backup is refused while a job is running",
+      status == 409, body)
+wait_job()
+status, body = post("/api/catalog/backup")
+check("and allowed again once it finishes", status == 200, body)
+
+# The one that matters most: nobody takes a backup before an upgrade they did
+# not know was happening.
+db_source = open("db.py", encoding="utf-8").read()
+check("init() backs the catalog up before it touches the schema",
+      'backup("before-upgrade")' in db_source
+      and db_source.index('backup("before-upgrade")')
+          < db_source.index("conn().executescript(SCHEMA)"))
+check("a backup that cannot be taken does not stop the program starting",
+      "must not stop the program starting" in db_source)
+check("the copy is taken through SQLite, not with a file copy",
+      "conn().backup(target)" in db_source,
+      "cp on a live database can produce a file torn halfway through a write")
+
+
+_CRASHED = False    # reached the end: whatever happened, it was not a crash
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")
 raise SystemExit(1 if FAILED else 0)

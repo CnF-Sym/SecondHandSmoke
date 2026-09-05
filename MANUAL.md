@@ -1404,7 +1404,7 @@ offloads them, then deliberately changes the source and corrupts, truncates and
 deletes destination files to confirm each fault is caught. It never touches
 mounted media. Set `DIT_KEEP_TEST_RIG=1` to keep the temp folder for inspection.
 
-Thirty-eight sections and more than 500 checks, covering: registration and
+**40 sections and more than 550 checks**, covering: registration and
 identity, the copy and verify path,
 corruption and rot, cancellation and resume for all four job types, the format
 gate, MHL and day report, metadata and sound reports, timecode sync across every

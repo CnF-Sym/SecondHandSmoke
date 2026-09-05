@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **500 checks across 38 sections**. The ones that matter most:
+More than **550 checks across 40 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -58,6 +58,8 @@ More than **500 checks across 38 sections**. The ones that matter most:
 | **[33]** | A card with filtered files can never read plain SAFE TO FORMAT |
 | **[37]** | A manifest altered after it was written is caught by the chain that covers it |
 | **[38]** | The library changes nothing, and never reports an unchecked drive as an empty one |
+| **[39]** | Reading every drive at once catches the same same-size corruption reading them in turn did |
+| **[40]** | A catalog backup is complete, readable, and taken before any upgrade |
 
 If any of that fails on your machine, do not use this, and please tell us:
 **<hello@cnfworks.com>**.
@@ -128,6 +130,23 @@ than MD5, which is the entire job.
 ---
 
 ## Install
+
+> **Requirements: an Apple Silicon Mac running macOS 13 (Ventura) or later.**
+> Intel Macs are not supported — the app is built for the architecture it is
+> built on, and these builds are Apple Silicon. Verification depends on the
+> macOS `F_NOCACHE` flag, so Windows and Linux are not supported either; see
+> the roadmap for why that is a real blocker rather than a missing feature.
+>
+> **This build is not notarized.** macOS will refuse to open it on first
+> launch. Open it once from **Finder → right-click → Open**, and if macOS still
+> refuses, go to **System Settings → Privacy & Security** and press **Open
+> Anyway** next to the message about Second Hand Smoke. A managed work Mac may
+> forbid that override entirely, in which case this cannot be installed there.
+>
+> **ffmpeg is not bundled.** Offload, verification, checksums, manifests, the
+> format gate and the library all work without it. Metadata, proxies, timecode
+> sync, waveform fallback and dailies do not, until you run
+> `brew install ffmpeg`. It is picked up without restarting.
 
 Download `SecondHandSmoke-<version>.dmg` from the
 [releases page](https://github.com/CnF-Sym/SecondHandSmoke/releases), open it,
