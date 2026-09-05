@@ -1898,6 +1898,40 @@ check("sync, proxies and handoff wait on a cleared card",
 check("a first run explains what a shoot day even is",
       'id="firstRun"' in ui_html and "firstRun" in ui_js)
 
+# Dimming was half an answer. Six dimmed panels are still six panels, and
+# somebody looking for "create day" before a day exists was reading past all of
+# them. Folded to a title each, the capability list survives and the wall does
+# not.
+check("a phase that cannot run folds to its own title",
+      ".panel.waiting:not(.open) > *:not(h2){display:none}" in ui_css)
+check("and can still be opened by somebody curious what it does",
+      "panel-toggle" in ui_js and "panel-toggle" in ui_css,
+      "a feature nobody can see is a feature nobody finds")
+check("the control says which panel it opens, not just \u201cShow\u201d",
+      'aria-label", `Show ${heading' in ui_js)
+check("and reports its state to assistive technology",
+      'aria-expanded' in ui_js)
+check("a panel unfolds itself the moment its phase becomes reachable",
+      'panel.classList.remove("open")' in ui_js
+      and "stale.remove()" in ui_js)
+check("the fold is not rebuilt on every poll, which would shut it "
+      "under somebody's cursor",
+      "if (already) return;" in ui_js)
+# Only phases that genuinely cannot act may fold. The library, the drive tools
+# and the catalog work with no shoot day open at all — folding those would hide
+# something usable, which is the failure this replaced, not a smaller version
+# of it.
+folded_panels = set(_re.findall(r'setWaiting\("(\w+)"', ui_js))
+check("every folding panel is one that really cannot run yet",
+      folded_panels == {"syncPanel", "proxyPanel", "handoffPanel",
+                        "reportPanel", "presetPanel", "namingPanel"},
+      ", ".join(sorted(folded_panels)))
+check("and nothing that works without a shoot day is ever folded",
+      not (folded_panels & {"libraryPanel", "drivePanel", "catalogPanel",
+                            "problemPanel", "jobPanel"}),
+      ", ".join(sorted(folded_panels & {"libraryPanel", "drivePanel",
+                                        "catalogPanel"})))
+
 # The wordmark was pulling the eye away from the thing that orients you.
 check("the logo does not out-shout the track",
       ".brand-logo{height:34px" in ui_css)

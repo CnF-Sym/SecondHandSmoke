@@ -1317,13 +1317,52 @@ function computeSteps(s) {
 // filled so it reads from across a cart, and a plain sentence saying what to do
 // next — because "which of these six things is my problem right now" is the
 // question at 4am, and a row of lamps does not answer it.
-// A phase that cannot run yet is dimmed, not hidden. Hiding controls mid-shoot
-// makes people think the tool broke; leaving them looking live makes them think
-// the tool is ignoring them. Dimmed, with the panel's own status line saying
-// what unlocks it, is the honest middle.
+// A phase that cannot run yet is folded, not hidden.
+//
+// Dimming was the first answer and it was only half of one. Six dimmed panels
+// are still six panels: before a shoot day exists, somebody looking for
+// "create day" was reading past presets, naming, filtering, reports, sync,
+// proxies and handoff to find it. Hiding them outright is worse — a tool whose
+// features vanish makes people think it broke, and nobody discovers a feature
+// that was never on screen.
+//
+// So a phase that cannot run collapses to its own title, with a control that
+// opens it. The whole capability list is still visible, one line each; the
+// forty controls underneath are not. It unfolds itself the moment the phase
+// becomes reachable, and anyone curious can open it early and read what it
+// does.
 function setWaiting(id, waiting) {
   const panel = $(id);
-  if (panel) panel.classList.toggle("waiting", Boolean(waiting));
+  if (!panel) return;
+  const already = panel.classList.contains("waiting");
+  panel.classList.toggle("waiting", Boolean(waiting));
+
+  if (!waiting) {
+    // Reachable now: unfold it and take the control away. Leaving a "Show"
+    // button on a live panel invites somebody to close the thing they need.
+    panel.classList.remove("open");
+    const stale = panel.querySelector(".panel-toggle");
+    if (stale) stale.remove();
+    return;
+  }
+  // Rebuilding this every poll would slam it shut under somebody's cursor.
+  if (already) return;
+  const heading = panel.querySelector("h2");
+  if (!heading || heading.querySelector(".panel-toggle")) return;
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "panel-toggle";
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.setAttribute("aria-label", `Show ${heading.textContent.trim()}`);
+  toggle.textContent = "Show";
+  toggle.onclick = () => {
+    const open = panel.classList.toggle("open");
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.textContent = open ? "Hide" : "Show";
+    toggle.setAttribute("aria-label",
+      `${open ? "Hide" : "Show"} ${heading.firstChild.textContent.trim()}`);
+  };
+  heading.appendChild(toggle);
 }
 
 function renderSteps(s) {
