@@ -370,6 +370,18 @@ input:focus,select:focus,button:focus-visible{
   box-shadow:0 8px 30px rgba(0,0,0,.4)}
 .toast.err{border-color:var(--danger); color:var(--danger)}
 
+/* Problems — failures that stay put.
+   Deliberately a panel and not a toast: the person who needs to read this may
+   be back from the coffee machine ten minutes after it happened. */
+.panel.accent-problem{border-left:2px solid var(--danger)}
+#problemPanel h2{color:var(--danger)}
+.problem{display:flex; align-items:flex-start; gap:10px; padding:9px 0;
+  border-bottom:1px solid var(--line); font-size:12px}
+.problem:last-of-type{border-bottom:none}
+.problem-text{flex:1; min-width:0; color:var(--text); overflow-wrap:anywhere}
+.problem-count{color:var(--danger); font-variant-numeric:tabular-nums;
+  font-weight:600; white-space:nowrap}
+
 
 /* Footer — the version, the licence, and where to write when it goes wrong.
    Deliberately at the bottom of every screen rather than behind an About menu:

@@ -39,9 +39,9 @@
       </p>
       <div id="daySwitch" class="chips"></div>
       <div class="field-row">
-        <input id="dayProject" placeholder="Project" value="PROJECT_01">
-        <input id="dayName" placeholder="DAY_01">
-        <input id="dayDate" type="date">
+        <input id="dayProject" placeholder="Project" value="PROJECT_01" aria-label="Project name">
+        <input id="dayName" placeholder="DAY_01" aria-label="Shoot day name">
+        <input id="dayDate" type="date" aria-label="Shoot date">
       </div>
       <button class="btn" onclick="createDay()">Start day</button>
       <div class="field-row">
@@ -60,12 +60,12 @@
       <div id="presetList"></div>
       <p class="note" id="presetResult" hidden></p>
       <div class="field-row">
-        <input id="presetName" placeholder="Preset name, e.g. SHOW A — three drives">
-        <select id="presetFolder" style="max-width:170px"></select>
+        <input id="presetName" placeholder="Preset name, e.g. SHOW A — three drives" aria-label="Preset name">
+        <select id="presetFolder" style="max-width:170px" aria-label="Preset folder"></select>
       </div>
       <button class="btn ghost" onclick="savePreset()">Save this day as a preset</button>
       <div class="field-row">
-        <input id="presetFolderName" placeholder="New folder, e.g. Season 2">
+        <input id="presetFolderName" placeholder="New folder, e.g. Season 2" aria-label="New preset folder name">
         <button class="btn ghost sm" onclick="addPresetFolder()"
           style="max-width:120px">Add folder</button>
       </div>
@@ -79,16 +79,16 @@
         recorded: those files are listed on the card, in the report and beside
         the manifest, and the card can never read plain SAFE TO FORMAT again.</p>
       <div class="field-row">
-        <input id="patternCamera" placeholder="Camera pattern, e.g. {day}_{roll}_{index}">
+        <input id="patternCamera" placeholder="Camera pattern, e.g. {day}_{roll}_{index}" aria-label="Camera file naming pattern">
       </div>
       <div class="field-row">
-        <input id="patternSound" placeholder="Sound pattern, e.g. {roll}_{scene}_{take}">
+        <input id="patternSound" placeholder="Sound pattern, e.g. {roll}_{scene}_{take}" aria-label="Sound file naming pattern">
       </div>
       <div class="field-row">
-        <input id="filterCamera" placeholder="Camera filter, e.g. -*.THM, -*/PROXY/*">
+        <input id="filterCamera" placeholder="Camera filter, e.g. -*.THM, -*/PROXY/*" aria-label="Camera file filter">
       </div>
       <div class="field-row">
-        <input id="filterSound" placeholder="Sound filter, e.g. -*.tmp">
+        <input id="filterSound" placeholder="Sound filter, e.g. -*.tmp" aria-label="Sound file filter">
       </div>
       <p class="note warn" id="filterWarning" hidden></p>
       <button class="btn ghost" onclick="saveNaming()">Save naming</button>
@@ -101,14 +101,14 @@
       <h2>Reports</h2>
       <p class="note" id="pdfNote"></p>
       <div class="field-row">
-        <input id="reportProduction" placeholder="Production name — printed on the PDF">
+        <input id="reportProduction" placeholder="Production name — printed on the PDF" aria-label="Production name printed on reports">
       </div>
       <div class="field-row">
-        <input id="reportLogo" placeholder="Logo image — choose, drop, or type a path">
+        <input id="reportLogo" placeholder="Logo image — choose, drop, or type a path" aria-label="Path to the logo image for reports">
         <button class="btn ghost sm" onclick="pickLogo()" style="max-width:110px">Choose…</button>
       </div>
       <input type="file" id="logoFile" accept="image/png,image/jpeg,image/tiff,image/heic,image/webp"
-             hidden onchange="logoChosen(this)">
+             hidden onchange="logoChosen(this)" aria-label="Choose a logo image file">
       <div class="logo-drop" id="logoDrop">
         <img class="logo-preview" id="logoPreview" alt="Current report logo" hidden>
         <span id="logoDropText">Drop a logo image here, or choose one above</span>
@@ -129,9 +129,9 @@
       <div class="dest-slots" id="destSlots"></div>
       <p class="note" style="margin:0 0 6px">Add another destination (advanced):</p>
       <div class="field-row">
-        <input id="destPath" placeholder="/Volumes/CRACK_A or a synced cloud folder">
-        <input id="destLabel" placeholder="Label" style="max-width:120px">
-        <select id="destRole">
+        <input id="destPath" placeholder="/Volumes/CRACK_A or a synced cloud folder" aria-label="Destination drive folder">
+        <input id="destLabel" placeholder="Label" style="max-width:120px" aria-label="Destination drive label">
+        <select id="destRole" aria-label="Destination role">
           <option value="primary">primary</option>
           <option value="backup" selected>backup</option>
           <option value="offsite">cloud / offsite</option>
@@ -151,6 +151,15 @@
 
   <div class="col">
     <p class="col-cap">Then everything else</p>
+
+    <!-- Failures live here until somebody dismisses them. A five-second
+         toast is the wrong place to put "this card cannot be formatted". -->
+    <section class="panel accent-problem" id="problemPanel" role="alert"
+             aria-live="assertive" hidden>
+      <h2>Problems</h2>
+      <div id="problems"></div>
+      <button class="btn ghost sm" onclick="dismissAllProblems()">Dismiss all</button>
+    </section>
 
     <section class="panel" id="jobPanel" hidden>
       <h2>Active job</h2>
@@ -208,7 +217,7 @@
 
       <div class="field-row">
         <input id="librarySearchBox" placeholder="Roll, scene, take, camera, clip name…"
-               onkeydown="if(event.key==='Enter')librarySearch()">
+               onkeydown="if(event.key==='Enter')librarySearch()" aria-label="Search the library">
         <button class="btn ghost" onclick="librarySearch()">Search</button>
       </div>
 
@@ -239,14 +248,27 @@
       </div>
     </section>
 
+    <section class="panel" id="catalogPanel">
+      <h2>Catalog</h2>
+      <p class="note">The catalog is this program's record of every file, hash
+        and drive. Losing it does not lose footage — your media and manifests
+        are on the drives, and the format gate reads the catalog rather than
+        the other way round — but it loses the library, the gate's history and
+        every sync decision. A backup is taken automatically before any
+        upgrade; this is the button for every other time.</p>
+      <p class="note" id="catalogState"></p>
+      <button class="btn ghost" onclick="catalogBackup()">Back up now</button>
+      <div id="catalogBackups"></div>
+    </section>
+
     <section class="panel" id="drivePanel">
       <h2>Drive tools</h2>
       <p class="note">How fast is this drive, and what is already on it. The
         speed test writes its own scratch file and removes it; indexing only
         reads. Neither changes anything about a card.</p>
       <div class="field-row">
-        <input id="drivePath" placeholder="/Volumes/SHOW_A">
-        <input id="driveLabel" placeholder="Label" style="max-width:150px">
+        <input id="drivePath" placeholder="/Volumes/SHOW_A" aria-label="Drive folder to test or index">
+        <input id="driveLabel" placeholder="Label" style="max-width:150px" aria-label="Drive label">
       </div>
       <button class="btn ghost" onclick="driveSpeed()">Speed test</button>
       <button class="btn ghost" onclick="driveIndex()">Index drive</button>

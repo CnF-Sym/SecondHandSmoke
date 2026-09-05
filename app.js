@@ -19,13 +19,67 @@ function duration(seconds) {
 }
 
 let toastTimer;
+// Confirmations may fade. Failures may not.
+//
+// A five-second toast is fine for "Checksum saved for this day." It is the
+// wrong container for "that card cannot be formatted": somebody who walked to
+// the coffee machine while a card copied comes back to a clean screen and no
+// idea anything went wrong. The interface's job at 4am is to still be holding
+// the bad news when the person gets back to it.
+//
+// So a failure goes to the problem list and stays there until it is dismissed
+// by hand. A success goes to the toast and fades, as it should.
 function toast(msg, isErr) {
+  if (isErr) return problem(msg);
   const t = $("toast");
   t.textContent = msg;
-  t.className = "toast" + (isErr ? " err" : "");
+  t.className = "toast";
   t.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+function problem(msg) {
+  const box = $("problems");
+  if (!box) { window.alert(msg); return; }   // never swallow a failure
+  // The same failure arriving twice in a row is one problem, not two: a poll
+  // that fails every second must not build a wall the real message hides in.
+  const existing = [...box.querySelectorAll(".problem-text")]
+    .find(node => node.textContent === msg);
+  if (existing) {
+    const row = existing.closest(".problem");
+    const count = row.querySelector(".problem-count");
+    const seen = Number(count.dataset.n || "1") + 1;
+    count.dataset.n = String(seen);
+    count.textContent = `×${seen}`;
+    count.hidden = false;
+    return;
+  }
+  const row = document.createElement("div");
+  row.className = "problem";
+  row.innerHTML = `<span class="problem-text"></span>`
+    + `<span class="problem-count" hidden></span>`
+    + `<button class="btn ghost sm" aria-label="Dismiss this problem">Dismiss</button>`;
+  row.querySelector(".problem-text").textContent = msg;
+  row.querySelector("button").onclick = () => { row.remove(); syncProblems(); };
+  box.appendChild(row);
+  syncProblems();
+}
+
+function syncProblems() {
+  const box = $("problems");
+  const panel = $("problemPanel");
+  if (!box || !panel) return;
+  const n = box.querySelectorAll(".problem").length;
+  panel.hidden = n === 0;
+  const heading = panel.querySelector("h2");
+  if (heading) heading.textContent = n === 1 ? "1 problem" : `${n} problems`;
+}
+
+function dismissAllProblems() {
+  const box = $("problems");
+  if (box) box.innerHTML = "";
+  syncProblems();
 }
 
 async function api(url, opts = {}) {
@@ -683,6 +737,33 @@ async function driveIndex() {
     toast("Indexing — reading the drive, and any manifests already on it.");
   } catch (err) { /* api() has already said why */ }
   refresh();
+}
+
+// -- the catalog -----------------------------------------------------------
+async function renderCatalog() {
+  const state = await api("/api/catalog");
+  const line = $("catalogState");
+  line.className = "note" + (state.healthy ? "" : " warn");
+  line.innerHTML = state.healthy
+    ? `SQLite reports the catalog intact. ${state.backups.length} backup(s) kept in `
+      + `<code>${esc(state.folder)}</code>.`
+    : `<b>The catalog failed its integrity check:</b> ${esc(state.detail)}. `
+      + `Your media and manifests on the drives are unaffected. Restore the `
+      + `newest backup below by replacing <code>${esc(state.path)}</code> with it.`;
+  $("catalogBackups").innerHTML = state.backups.length
+    ? `<div class="list">` + state.backups.map(b => `<div class="row">
+        <div class="grow"><div>${esc(b.name)}</div>
+        <div class="path">${esc(b.taken_at)}</div></div>
+        <div class="nowrap">${bytes(b.bytes)}</div></div>`).join("") + `</div>`
+    : `<p class="empty">No backups yet.</p>`;
+}
+
+async function catalogBackup() {
+  try {
+    const j = await api("/api/catalog/backup", { method: "POST" });
+    toast("Catalog backed up.");
+    await renderCatalog();
+  } catch (err) { /* api() has already raised the problem */ }
 }
 
 // -- the library -----------------------------------------------------------
@@ -1367,3 +1448,8 @@ document.addEventListener("visibilitychange", () => {
 
 wireLogoDrop();
 refresh().then(busy => schedulePoll(busy ? POLL_ACTIVE : POLL_IDLE));
+
+// Once, at startup — not in the poll loop. PRAGMA integrity_check reads the
+// whole catalog, which is the right thing to do when somebody opens the app
+// and the wrong thing to do every second for the rest of the day.
+renderCatalog().catch(() => { /* the panel simply stays empty */ });
