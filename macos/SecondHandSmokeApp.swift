@@ -201,9 +201,24 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
             .appendingPathComponent("Library/Logs/Second Hand Smoke", isDirectory: true)
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let url = logs.appendingPathComponent("server.log")
-        // Start each launch with an empty log. The one question support ever
-        // needs answered is what happened during *this* launch.
-        FileManager.default.createFile(atPath: url.path, contents: Data())
+        // Keep the last few launches, do not truncate. The launch whose log
+        // matters most is usually the one *before* the current one: somebody
+        // whose app died mid-offload reopens it, and truncating here destroys
+        // the only evidence of what happened at the exact moment they most
+        // need an answer. server.log is current; server.1.log is the launch
+        // before it, and so on to server.4.log.
+        let keep = 5
+        let fm = FileManager.default
+        let rotated = { (n: Int) in
+            logs.appendingPathComponent(n == 0 ? "server.log" : "server.\(n).log")
+        }
+        try? fm.removeItem(at: rotated(keep - 1))
+        for n in stride(from: keep - 2, through: 0, by: -1) {
+            if fm.fileExists(atPath: rotated(n).path) {
+                try? fm.moveItem(at: rotated(n), to: rotated(n + 1))
+            }
+        }
+        fm.createFile(atPath: url.path, contents: Data())
         return url
     }
 
