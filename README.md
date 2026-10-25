@@ -172,7 +172,7 @@ manifests and the format gate all work exactly as normal; metadata, ProRes
 proxies, timecode sync, the waveform fallback and dailies are unavailable, and
 the interface says so rather than failing quietly.
 
-Each launch writes a log to `~/Library/Logs/Second Hand Smoke/server.log`, and
+Each launch writes a log to `~/CnF-Libraries-Installs/Second Hand Smoke/Logs/server.log`, and
 the app menu has **Reveal Server Log in Finder**. That is the file to send if
 something goes wrong.
 
@@ -209,7 +209,7 @@ rest from the environment as normal.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DIT_DB` | `~/SecondHandSmoke/catalog.db` | Catalog location |
+| `DIT_DB` | `~/CnF-Libraries-Installs/Second Hand Smoke/catalog.db` | Catalog location |
 | `DIT_SCAN_ROOT` | `/Volumes` | Where to look for cards |
 | `DIT_MIN_COPIES` | `2` | Verified copies before a card clears; values below 2 are ignored |
 | `DIT_PORT` | `3838` | Web UI port |
@@ -856,7 +856,7 @@ immediately and everything else waits.
 
 When you write, the useful things to include are the version from the footer,
 what you were doing, and — if the app would not start —
-`~/Library/Logs/Second Hand Smoke/server.log`. Never send footage.
+`~/CnF-Libraries-Installs/Second Hand Smoke/Logs/server.log`. Never send footage.
 
 Bugs and feature requests are also welcome as
 [GitHub issues](https://github.com/CnF-Sym/SecondHandSmoke/issues), which have

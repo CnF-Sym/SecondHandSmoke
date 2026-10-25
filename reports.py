@@ -975,7 +975,7 @@ def report_dir(data):
     dests = data["destinations"]
     day = data["day"]
     folder = (os.path.join(dests[0]["path"], day["project"], day["name"], "REPORTS")
-              if dests else os.path.expanduser("~/SecondHandSmoke/reports"))
+              if dests else os.path.join(os.path.dirname(db.DB_PATH), "reports"))
     os.makedirs(folder, exist_ok=True)
     return folder
 

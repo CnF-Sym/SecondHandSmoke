@@ -181,7 +181,7 @@ and report progress back through a status snapshot the interface polls.
  storage.py     │      (ffprobe) (ffmpeg)   waveform.py (ffmpeg+PIL)
                 │
                 ▼
-             db.py  ── SQLite catalog (~/SecondHandSmoke/catalog.db)
+             db.py  ── SQLite catalog (~/CnF-Libraries-Installs/Second Hand Smoke/catalog.db)
                 │
                 ▼
             reports.py ── format gate, ASC MHL 1.1, day report
@@ -292,7 +292,7 @@ before `start.command`.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DIT_DB` | `~/SecondHandSmoke/catalog.db` | Catalog location |
+| `DIT_DB` | `~/CnF-Libraries-Installs/Second Hand Smoke/catalog.db` | Catalog location |
 | `DIT_SCAN_ROOT` | `/Volumes` | Where to look for cards |
 | `DIT_MIN_COPIES` | `2` | Verified drives before a card clears. Values below 2 are ignored |
 | `DIT_PORT` | `3838` | Web interface port |
@@ -321,7 +321,7 @@ preference. Each preset's logo copy lives beside the active one, as
 A logo can be picked with a file dialog, dropped onto the Reports panel, or
 typed as a path. All three arrive at `pdfreport.store_logo()`, which decodes the
 bytes, verifies they are really an image, resizes anything over 2400 px, and
-re-encodes as PNG into `~/SecondHandSmoke/branding/logo.png`. The setting then
+re-encodes as PNG into `~/CnF-Libraries-Installs/Second Hand Smoke/branding/logo.png`. The setting then
 points at that copy.
 
 A picked file travels base64-encoded inside the JSON request body rather than as
@@ -829,7 +829,7 @@ above — same destinations, same media, same format-gate verdict — so the two
 documents cannot describe the same day differently. reportlab is required for
 this and nothing else; the HTML report is written either way.
 
-### 14.3c Report thumbnails — `~/SecondHandSmoke/thumbnails/<hash>.jpg`
+### 14.3c Report thumbnails — `~/CnF-Libraries-Installs/Second Hand Smoke/thumbnails/<hash>.jpg`
 
 One JPEG per camera clip, 480 px wide, decoded from the verified primary-drive
 copy at roughly ten per cent into the clip so the frame is not a black slate.
@@ -888,7 +888,7 @@ list of clips that need editorial review.
 
 ## 15. The catalog database
 
-SQLite in WAL mode at `DIT_DB` (default `~/SecondHandSmoke/catalog.db`). A catalog left at
+SQLite in WAL mode at `DIT_DB` (default `~/CnF-Libraries-Installs/Second Hand Smoke/catalog.db`). A catalog left at
 an earlier location (`~/FML/`, then `~/CrackodileDIT/`) is moved across automatically
 on first launch, newest first. One
 connection per thread, foreign keys on. Schema migrations are forward-only column

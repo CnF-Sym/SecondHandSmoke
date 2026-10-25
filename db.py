@@ -27,13 +27,32 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-DB_PATH = os.environ.get("DIT_DB", os.path.expanduser("~/SecondHandSmoke/catalog.db"))
+import cnf_libraries
+from pathlib import Path
+
+# CnF rule: everything lives in CnF-Libraries-Installs/Second Hand Smoke/ (catalog, backups, thumbnails,
+# branding, default reports) — never a loose folder in the home folder. The old ~/SecondHandSmoke folder is
+# moved over whole, once, by a same-drive rename; if that can't happen, LEGACY_DB_PATHS below still moves
+# the catalog itself on first use.
+LEGACY_DATA_DIR = os.path.expanduser("~/SecondHandSmoke")
+
+
+def _default_db_path():
+    folder = cnf_libraries.root() / "Second Hand Smoke"
+    cnf_libraries.migrate(Path(LEGACY_DATA_DIR), folder)
+    return str(folder / "catalog.db")
+
+
+DB_PATH = os.environ.get("DIT_DB") or _default_db_path()
+if not os.environ.get("DIT_DB"):
+    # Logos are stored by full path (settings + presets); after the move, point them at the new folder.
+    cnf_libraries.repoint_once(Path(DB_PATH), [Path(LEGACY_DATA_DIR)], Path(DB_PATH).parent)
 
 # Catalog locations used by earlier builds, newest first. If one of these still
 # holds a database and the current location is empty, it is moved across on
 # first use rather than silently starting the shoot with a blank catalog.
 # Add a path here when the default catalog location changes in a future release.
-LEGACY_DB_PATHS = ()
+LEGACY_DB_PATHS = (os.path.join(LEGACY_DATA_DIR, "catalog.db"),)
 
 _local = threading.local()
 _migrate_lock = threading.Lock()

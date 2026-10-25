@@ -36,7 +36,8 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        buildWindow()
+        // CnF rule: the web view keeps nothing in ~/Library (this interface stores nothing in localStorage).
+        buildWindow(CnFWebKit(storageFile: nil).configuration())
 
         logURL = prepareLogFile()
         showStatus("Starting Second Hand Smoke…")
@@ -54,8 +55,7 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
 
     // MARK: - Window and menu
 
-    private func buildWindow() {
-        let config = WKWebViewConfiguration()
+    private func buildWindow(_ config: WKWebViewConfiguration) {
         config.defaultWebpagePreferences.allowsContentJavaScript = true
 
         webView = WKWebView(frame: .zero, configuration: config)
@@ -197,8 +197,16 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
     }
 
     private func prepareLogFile() -> URL {
-        let logs = FileManager.default.homeDirectoryForCurrentUser
+        // CnF rule: CnF-Libraries-Installs/Second Hand Smoke/Logs, never ~/Library/Logs. Logs from older
+        // builds are left where they were only if the move cannot be a same-drive rename.
+        let logs = CnFLibraries.folder("Second Hand Smoke", "Logs")
+        let legacyLogs = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Logs/Second Hand Smoke", isDirectory: true)
+        if CnFLibraries.migrate(from: legacyLogs, to: logs) == false,
+           FileManager.default.fileExists(atPath: legacyLogs.path),
+           ((try? FileManager.default.contentsOfDirectory(atPath: legacyLogs.path)) ?? []).isEmpty {
+            try? FileManager.default.removeItem(at: legacyLogs)
+        }
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         let url = logs.appendingPathComponent("server.log")
         // Keep the last few launches, do not truncate. The launch whose log
@@ -244,6 +252,8 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
         var environment = ProcessInfo.processInfo.environment
         environment["DIT_PORT"] = String(port)
         environment["PYTHONUNBUFFERED"] = "1"
+        // The server keeps its catalog in the same CnF-Libraries-Installs folder this shell found.
+        environment["CNF_LIBRARIES_INSTALLS"] = CnFLibraries.root.path
         // Homebrew is not on a Finder-launched app's PATH. Python's own tool
         // discovery covers this too (toolpaths.py), but putting the usual
         // locations back on PATH also fixes anything ffmpeg itself shells out
@@ -315,6 +325,8 @@ final class SecondHandSmokeApp: NSObject, NSApplicationDelegate, WKNavigationDel
 
     func applicationWillTerminate(_ notification: Notification) {
         stopServer()
+        // CnF rule: remove what macOS itself drops in ~/Library under this bundle ID.
+        CnFLibraries.removeSystemLeftovers()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

@@ -76,6 +76,7 @@ fi
 echo "--- Wrapper"
 xcrun swiftc -O -target arm64-apple-macos13.0 -framework Cocoa -framework WebKit \
   "$ROOT/macos/SecondHandSmokeApp.swift" "$ROOT/macos/main.swift" \
+  "$ROOT/macos/CnFLibraries.swift" "$ROOT/macos/CnFWebKit.swift" \
   -o "$CONTENTS/MacOS/SecondHandSmoke"
 
 # 5. Sign. On Apple Silicon an unsigned binary will not launch at all, so the
