@@ -43,3 +43,6 @@ dailies/
 
 # Internal scaffolding, not part of the release
 _NEXT_SESSION_PROMPT.md
+
+# Added by GYST cleanup (Nov 2026)
+.env
