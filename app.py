@@ -33,6 +33,7 @@ from datetime import date
 from flask import Flask, jsonify, request, render_template, Response, send_from_directory
 
 import cards
+import cnf_libraries
 import db
 import destinations
 import drivetools
@@ -145,10 +146,11 @@ def json_error(exc):
         # them to look at one is telling them there is no help. The app's
         # own menu has Reveal Server Log in Finder, and the log is where
         # this exception just went.
+        log_path = cnf_libraries.root() / "Second Hand Smoke" / "Logs" / "server.log"
         message = ("Something went wrong. The details are in the server "
                    "log — the app menu has \u201cReveal Server Log in "
                    "Finder\u201d, or look in "
-                   "~/Library/Logs/Second Hand Smoke/server.log")
+                   f"{log_path}")
     else:
         message = getattr(exc, "description", str(exc))
     return jsonify(error=message), code
@@ -261,7 +263,7 @@ def app_js():
 # An allow-list rather than a folder: this is a web server on a machine full of
 # other people's footage, and "serve whatever is named" is how that stops being
 # true.
-BRAND_ASSETS = {"logo.png", "icon.png", "icon-192.png"}
+BRAND_ASSETS = {"logo.png", "logo-header.png", "icon.png", "icon-192.png"}
 
 
 @app.get("/static/brand/<name>")
@@ -373,11 +375,8 @@ def browse():
 
 @app.get("/api/scan")
 def scan():
-    destinations = db.q("SELECT path, device_id FROM destinations")
-    found, problems = cards.scan(
-        exclude_paths=[d["path"] for d in destinations],
-        exclude_device_ids=[d["device_id"] for d in destinations if d["device_id"]],
-    )
+    destinations = db.q("SELECT path, device_id, label FROM destinations")
+    found, problems = cards.scan(destinations=destinations)
     # Rebuilt under a lock: Flask serves requests on threads, and a register
     # or ingest call reading the cache while a scan clears it would see a card
     # that is only half re-registered.
@@ -395,6 +394,9 @@ def scan():
         item["known"] = bool(known)
         item["card_id"] = known["id"] if known else None
         item["status"] = known["status"] if known else None
+        gate = reports.card_status_cached(known["id"]) if known else {}
+        item["safe"] = bool(gate.get("safe"))
+        item["with_exclusions"] = bool(gate.get("with_exclusions"))
         out.append(item)
     return jsonify(cards=out, scan_root=cards.SCAN_ROOT, problems=problems)
 
@@ -1150,6 +1152,11 @@ def state():
             payload["cards"].append(item)
     return jsonify(payload)
 
+
+if __name__ == "__main__":
+    from server_main import claim_single_instance
+
+    _catalog_lock = claim_single_instance()
 
 db.init()
 

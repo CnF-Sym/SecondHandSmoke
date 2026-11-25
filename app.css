@@ -153,10 +153,10 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
 /* Folded: the title stays, the controls go. Everything this program can do is
    still on screen as a list of names — which is how anyone finds out it does
    sync at all — without forty controls between somebody and the one button
-   they came for. Opening it is one click, and it opens itself the moment the
-   phase becomes reachable. */
+   they came for. Setup stays folded until the operator opens it. */
 .panel.waiting:not(.open) > *:not(h2){display:none}
-.panel.waiting:not(.open){padding-bottom:14px}
+.panel.setup-fold:not(.open) > *:not(h2){display:none}
+.panel.waiting:not(.open),.panel.setup-fold:not(.open){padding-bottom:14px}
 .panel-toggle{float:right; background:none; border:1px solid var(--line-hot);
   color:var(--dim); font:inherit; font-size:10px; letter-spacing:.12em;
   text-transform:uppercase; padding:2px 9px; cursor:pointer;
@@ -166,6 +166,9 @@ main{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);
 
 .note{color:var(--dim); font-size:12px; margin:0 0 12px; font-family:var(--sans);
   line-height:1.55}
+.panel-help{color:var(--dim); margin:-6px 0 12px}
+.panel-help summary{width:max-content; cursor:pointer; font-size:10px}
+.panel-help .note{margin:6px 0 0}
 .note code{color:var(--text)}
 .note.warn{color:var(--work)}
 .field-label{align-self:center; font-size:10px; letter-spacing:.16em;
@@ -217,7 +220,7 @@ input:focus,select:focus,button:focus-visible{
 .btn.handoff{border-color:var(--pink); color:var(--pink)}
 .btn.handoff:hover{background:var(--pink); color:#210A18}
 .btn.sm{padding:6px 11px; font-size:10px}
-.btn:disabled{opacity:.32; cursor:not-allowed; border-color:var(--line)}
+.btn:disabled{opacity:.55; cursor:not-allowed; border-color:var(--line)}
 
 /* the big one-button hero CTA -------------------------------------------- */
 /* This used to pulse, permanently. A control that never stops asking for

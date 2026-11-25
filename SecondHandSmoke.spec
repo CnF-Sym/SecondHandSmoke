@@ -25,6 +25,7 @@ a = Analysis(
         # The three files the interface serves, not the folder: the source
         # artwork beside them is several megabytes nobody needs inside the app.
         ('assets/logo.png', 'assets'),
+        ('assets/logo-header.png', 'assets'),
         ('assets/icon.png', 'assets'),
         ('assets/icon-192.png', 'assets'),
         ('VERSION', '.'),

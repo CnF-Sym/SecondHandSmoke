@@ -25,10 +25,12 @@ else
     echo; echo "NOT SIGNED: the build didn't leave an app at $CNF_BUILT_APP"
   else
     echo; echo "=== Signing + notarizing with $CNF_RELEASE ==="
-    if CNF_NO_PAUSE=1 /bin/bash "$CNF_RELEASE" "$CNF_BUILT_APP"; then
+    # The shared signer discovers macos/entitlements.plist one level above dist/.
+    if CNF_NO_PAUSE=1 /bin/bash "$CNF_RELEASE" "$CNF_BUILT_APP" &&
+       /bin/bash "$CNF_SCRIPT_DIR/macos/verify_release_app.sh" "$CNF_BUILT_APP"; then
       CNF_RELEASE_OK=1
     else
-      echo; echo "NOT SIGNED: release.command failed (its reason is above). The app is built but only ad-hoc signed."
+      echo; echo "RELEASE FAILED: signing, notarization, or signature validation failed. See above."
     fi
   fi
 fi
@@ -36,3 +38,4 @@ fi
 echo ""
 echo "Press return to close this window."
 read
+[[ "$CNF_BUILD_STATUS" == 0 && ( -n "${CNF_SKIP_RELEASE:-}" || "$CNF_RELEASE_OK" == 1 ) ]]

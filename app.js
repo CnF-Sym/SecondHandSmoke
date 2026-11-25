@@ -92,6 +92,24 @@ async function api(url, opts = {}) {
 }
 
 // -- actions ---------------------------------------------------------------
+let newDayOpen = false;
+let displayedDay;
+
+function renderDay(day) {
+  displayedDay = day;
+  $("activeDay").hidden = !day;
+  $("activeDaySummary").textContent = day
+    ? `${day.project} / ${day.name} · ${day.shoot_date}` : "";
+  $("newDayForm").hidden = Boolean(day) && !newDayOpen;
+  $("newDayButton").setAttribute("aria-expanded", String(newDayOpen));
+  $("newDayButton").textContent = newDayOpen ? "Cancel new day" : "New day…";
+}
+
+function toggleNewDay() {
+  newDayOpen = !newDayOpen;
+  renderDay(displayedDay);
+  if (newDayOpen) $("dayProject").focus();
+}
 async function createDay() {
   await api("/api/day", { method: "POST", body: JSON.stringify({
     project: $("dayProject").value,
@@ -99,6 +117,7 @@ async function createDay() {
     shoot_date: $("dayDate").value
   })});
   $("dayName").value = "";
+  newDayOpen = false;
   refresh();
 }
 
@@ -117,8 +136,14 @@ async function delDest(id) {
   refresh();
 }
 
+let lastScan;
+
 async function scan() {
-  const j = await api("/api/scan");
+  lastScan = await api("/api/scan");
+  renderScan(lastScan);
+}
+
+function renderScan(j) {
   $("scanRoot").textContent = j.scan_root;
   const box = $("scanList");
   const problems = (j.problems || []).map(p =>
@@ -128,19 +153,22 @@ async function scan() {
     return;
   }
   box.innerHTML = problems + j.cards.map(c => {
-    const label = !c.known ? "Ingest card"
-      : (c.status === "verified" ? "Re-verify card" : "Resume ingest");
+    const label = c.known ? "Resume ingest" : "Ingest card";
+    const clearedLabel = c.with_exclusions ? "Cleared with exclusions" : "Cleared";
+    const actions = c.safe
+      ? `<button class="btn sm ghost" onclick="offload(${c.card_id},'verify')">Re-verify</button>`
+      : `<button class="btn go" onclick="ingestCard('${c.fingerprint}')">${label}</button>
+         <button class="btn sm ghost" onclick="register('${c.fingerprint}')">Register only</button>`;
     return `
     <div class="found">
       <div class="grow">
         <div><span class="roll-sm">${esc(c.roll || c.label)}</span> <span class="tag">${esc(c.kind)}</span>
-        ${c.known ? '<span class="tag known">registered</span>' : ""}</div>
+        ${c.safe ? `<span class="tag ${c.with_exclusions ? "backup" : ""}">${clearedLabel}</span>`
+          : (c.known ? '<span class="tag known">registered</span>' : "")}</div>
         <div class="path">${esc(c.path)} · ${c.media_count} media of ${c.file_count} files · ${bytes(c.total_bytes)}</div>
         ${(c.scan_errors || []).length ? '<div class="scan-problem">Card has read errors — ingest blocked</div>' : ''}
       </div>
-      ${(c.scan_errors || []).length ? "" : `
-      <button class="btn go" onclick="ingestCard('${c.fingerprint}')">${label}</button>
-      <button class="btn sm ghost" onclick="register('${c.fingerprint}')">Register only</button>`}
+      ${(c.scan_errors || []).length ? "" : actions}
     </div>`;
   }).join("");
 }
@@ -412,13 +440,22 @@ function renderReports(state) {
   }
 
   const ready = Boolean(pdf.available && activeDayId);
-  $("pdfTableButton").disabled = !ready;
-  $("pdfMetaButton").disabled = !ready;
-  $("pdfThumbButton").disabled = !ready;
+  for (const id of ["pdfTableButton", "pdfMetaButton", "pdfThumbButton"]) {
+    $(id).disabled = !ready;
+    $(id).title = !pdf.available ? (pdf.reason || "PDF reports are unavailable.")
+      : !activeDayId ? "Start a shoot day first." : "";
+  }
 
+  $("pdfHelp").hidden = true;
   if (!pdf.available) {
     note.className = "note warn";
-    note.textContent = pdf.reason || "PDF reports are unavailable on this machine.";
+    const reason = pdf.reason || "PDF reports are unavailable on this machine.";
+    const firstSentence = reason.indexOf(". ");
+    note.textContent = firstSentence < 0 ? reason : reason.slice(0, firstSentence + 1);
+    if (firstSentence >= 0) {
+      $("pdfHelpText").textContent = reason.slice(firstSentence + 2);
+      $("pdfHelp").hidden = false;
+    }
   } else if (!activeDayId) {
     note.className = "note";
     note.textContent = "Start a shoot day to produce a report.";
@@ -935,7 +972,9 @@ function renderHandoff(summary, syncSummary, day, job) {
   const jobActive = job && ["queued", "running"].includes(job.state);
   rebuild.hidden = true;
   notes.hidden = true;
+  rebuild.title = jobActive ? "Wait for the current job to finish." : "";
   if (!day) {
+    button.title = "Start a shoot day to build a handoff.";
     statusLine("handoffState", "idle", "Start a shoot day to build a handoff.");
     detail.textContent = "Resolve timeline · ALE · relink manifest · review dailies";
     button.disabled = true;
@@ -946,6 +985,10 @@ function renderHandoff(summary, syncSummary, day, job) {
   const unresolved = Number(summary?.unresolved || 0);
   const synced = Number(syncSummary?.analyzed || 0);
   button.disabled = !summary?.available || !total || synced !== total || jobActive;
+  button.title = !summary?.available ? (summary?.unavailable_reason || "Handoff tools are unavailable.")
+    : !total ? "No camera clips catalogued yet."
+    : synced !== total ? "Sync the day's footage first."
+    : jobActive ? "Wait for the current job to finish." : "";
   button.textContent = summary?.package_ready ? "Check handoff" : "Build Resolve handoff";
   if (!summary?.available) {
     statusLine("handoffState", "bad", "Handoff unavailable on this machine");
@@ -985,12 +1028,15 @@ function renderSync(summary, waveform, day, job) {
   const waveformButton = $("waveformButton");
   const jobActive = job && ["queued", "running"].includes(job.state);
   button.disabled = !day || jobActive;
+  button.title = !day ? "Start a shoot day first."
+    : jobActive ? "Wait for the current job to finish." : "";
   button.textContent = summary?.waveform
     ? "Reset with timecode sync"
     : (summary && summary.analyzed ? "Re-sync day's footage" : "Sync day's footage");
   detail.textContent = "Relationships only · originals and proxies untouched";
   if (!day) {
     waveformButton.disabled = true;
+    waveformButton.title = "Start a shoot day first.";
     statusLine("syncState", "idle", "Start a shoot day to calculate sync.");
     return;
   }
@@ -1001,6 +1047,11 @@ function renderSync(summary, waveform, day, job) {
     Number(summary?.invalid || 0) + Number(summary?.review || 0);
   const waveformPending = Number(waveform?.pending || 0);
   waveformButton.disabled = !waveform?.available || !analyzed || !waveformPending || jobActive;
+  waveformButton.title = !waveform?.available ? "Waveform tools are unavailable."
+    : !total ? "No camera clips catalogued yet."
+    : !analyzed ? "Sync the day's footage first."
+    : !waveformPending ? "All eligible waveforms have been checked."
+    : jobActive ? "Wait for the current job to finish." : "";
   waveformButton.textContent = !waveform?.available ? "Waveform unavailable" :
     (!waveformPending && analyzed ? "Waveforms checked" :
       (attention ? "Waveform fallback" : "Check TC waveforms"));
@@ -1036,6 +1087,7 @@ function renderProxyDay(cards, day, job) {
   if (!day) {
     statusLine("proxyDayState", "idle", "Start a shoot day to build proxies.");
     button.disabled = true;
+    button.title = "Start a shoot day to build proxies.";
     return;
   }
   const eligible = (cards || []).filter(c => ["camera", "mixed"].includes(c.kind) && c.proxies?.total);
@@ -1044,6 +1096,10 @@ function renderProxyDay(cards, day, job) {
   const problems = eligible.reduce((n, c) => n + (c.proxies.problems || 0), 0);
   const unavailable = eligible.some(c => !c.proxies.available);
   button.disabled = !eligible.length || (ready === total && total > 0) || jobActive || proxyQueueActive || unavailable;
+  button.title = !eligible.length ? "No cleared camera clips are ready for proxies."
+    : unavailable ? "Proxies are unavailable on this machine."
+    : ready === total ? "All eligible proxies are ready."
+    : jobActive || proxyQueueActive ? "Wait for the current job to finish." : "";
   if (proxyQueueActive) {
     statusLine("proxyDayState", "warn", `Building… ${ready} / ${total} clips ready`);
     detail.textContent = "Queuing every eligible roll automatically, one drive-safe job at a time";
@@ -1117,15 +1173,15 @@ function renderCards(cards, dayId) {
         Deliberately not copied: ${g.excluded.map(esc).join(", ")}</div>` : ""}
       <div class="slate-actions">
         <button class="btn sm ${g.safe ? "" : "go"}" onclick="offload(${c.id})"
-          ${c.mounted ? "" : "disabled"}>
+          ${c.mounted ? "" : 'disabled title="Mount the source card first."'}>
           ${c.status === "verified" ? "Resume offload" : "Offload"}</button>
         <button class="btn sm ghost" onclick="offload(${c.id},'verify')">Re-read drives</button>
-        <button class="btn sm ghost" onclick="analyze(${c.id})" ${canAnalyze ? "" : "disabled"}>Read metadata</button>
+        <button class="btn sm ghost" onclick="analyze(${c.id})" ${canAnalyze ? "" : 'disabled title="Mount the card or verify its destination copies first."'}>Read metadata</button>
         ${p.total ? `<button class="btn sm proxy" onclick="buildProxies(${c.id},false)"
-          ${canProxy ? "" : "disabled"}>${p.ready === p.total ? "Check proxies" : "Build proxies"}</button>` : ""}
+          ${canProxy ? "" : `disabled title="${g.safe ? "Proxy tools are unavailable." : "The card must clear verification first."}"`}>${p.ready === p.total ? "Check proxies" : "Build proxies"}</button>` : ""}
         ${p.ready ? `<button class="btn sm ghost" onclick="buildProxies(${c.id},true)"
-          ${canProxy ? "" : "disabled"}>Rebuild proxies</button>` : ""}
-        <button class="btn sm ghost" onclick="manifest(${c.id})" ${g.safe ? "" : "disabled"}>Write manifest</button>
+          ${canProxy ? "" : `disabled title="${g.safe ? "Proxy tools are unavailable." : "The card must clear verification first."}"`}>Rebuild proxies</button>` : ""}
+        <button class="btn sm ghost" onclick="manifest(${c.id})" ${g.safe ? "" : 'disabled title="The card must clear verification first."'}>Write manifest</button>
         <button class="btn sm ghost" onclick="openReport(${dayId})">Day report</button>
         <span class="count">${g.verified} / ${g.total} verified</span>
       </div>
@@ -1196,6 +1252,7 @@ async function browseTo(path) {
   browseParent = j.parent;
   $("browsePath").textContent = j.path;
   $("browseUp").disabled = !j.parent;
+  $("browseUp").title = j.parent ? "" : "This is the top of the browseable folder.";
   $("browseList").innerHTML = j.entries.length
     ? j.entries.map(e => `<div class="browse-row" data-path="${esc(e.path)}">
         <span class="browse-icon">▸</span>${esc(e.name)}</div>`).join("")
@@ -1329,15 +1386,18 @@ function computeSteps(s) {
 // So a phase that cannot run collapses to its own title, with a control that
 // opens it. The whole capability list is still visible, one line each; the
 // forty controls underneath are not. It unfolds itself the moment the phase
-// becomes reachable, and anyone curious can open it early and read what it
-// does.
-function setWaiting(id, waiting) {
+// becomes reachable, and anyone curious can open it early. Setup panels
+// stay folded until asked for, so the next step is easy to reach.
+const openSetupPanels = new Set();
+
+function setWaiting(id, waiting, setup = false) {
   const panel = $(id);
   if (!panel) return;
-  const already = panel.classList.contains("waiting");
+  const already = panel.classList.contains("waiting") || panel.classList.contains("setup-fold");
   panel.classList.toggle("waiting", Boolean(waiting));
+  panel.classList.toggle("setup-fold", setup);
 
-  if (!waiting) {
+  if (!waiting && !setup) {
     // Reachable now: unfold it and take the control away. Leaving a "Show"
     // button on a live panel invites somebody to close the thing they need.
     panel.classList.remove("open");
@@ -1357,12 +1417,17 @@ function setWaiting(id, waiting) {
   toggle.textContent = "Show";
   toggle.onclick = () => {
     const open = panel.classList.toggle("open");
+    if (setup) {
+      if (open) openSetupPanels.add(id);
+      else openSetupPanels.delete(id);
+    }
     toggle.setAttribute("aria-expanded", String(open));
     toggle.textContent = open ? "Hide" : "Show";
     toggle.setAttribute("aria-label",
       `${open ? "Hide" : "Show"} ${heading.firstChild.textContent.trim()}`);
   };
   heading.appendChild(toggle);
+  if (setup && openSetupPanels.has(id)) toggle.click();
 }
 
 function renderSteps(s) {
@@ -1413,6 +1478,7 @@ async function refresh() {
     ? `<b>${esc(s.day.project)}</b> / <b>${esc(s.day.name)}</b> · ${esc(s.day.shoot_date)}`
     : "No shoot day selected";
 
+  renderDay(s.day);
   $("daySwitch").innerHTML = s.days.map(d =>
     `<span class="chip ${s.day && d.id === s.day.id ? "on" : ""}"
        onclick="activateDay(${d.id})">${esc(d.name)}</span>`).join("");
@@ -1430,6 +1496,19 @@ async function refresh() {
   renderProxyDay(s.cards, s.day, s.job);
   renderHandoff(s.handoff, s.sync, s.day, s.job);
   renderCards(s.cards, s.day ? s.day.id : 0);
+  if (lastScan) {
+    let scanChanged = false;
+    for (const entry of lastScan.cards) {
+      const card = s.cards.find(c => c.fingerprint === entry.fingerprint);
+      if (card && (entry.safe !== card.gate.safe
+          || entry.with_exclusions !== Boolean(card.gate.with_exclusions) || !entry.known)) {
+        Object.assign(entry, { safe: card.gate.safe, with_exclusions: Boolean(card.gate.with_exclusions),
+          known: true, card_id: card.id });
+        scanChanged = true;
+      }
+    }
+    if (scanChanged) renderScan(lastScan);
+  }
   renderSteps(s);
   renderTools(s.tools);
   renderReports(s);
@@ -1444,9 +1523,9 @@ async function refresh() {
   setWaiting("syncPanel", !anyCleared);
   setWaiting("proxyPanel", !anyCleared);
   setWaiting("handoffPanel", !anyCleared);
-  setWaiting("reportPanel", !s.day);
-  setWaiting("presetPanel", !s.day);
-  setWaiting("namingPanel", !s.day);
+  setWaiting("reportPanel", !s.day, true);
+  setWaiting("presetPanel", !s.day, true);
+  setWaiting("namingPanel", !s.day, true);
   $("firstRun").hidden = (s.days || []).length > 0;
 
   if (proxyQueueActive && s.job && s.job.job_type === "proxy" &&

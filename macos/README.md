@@ -49,21 +49,33 @@ The first open still needs **right-click → Open**, once.
 
 ## Release build
 
-Set `CODESIGN_IDENTITY` to the exact name of your Developer ID Application
-certificate, then double-click **Make Second Hand Smoke DMG.command**. For
-notarization, also set `NOTARY_PROFILE` to an existing `notarytool` keychain
-profile:
+1. Double-click **Build Second Hand Smoke.command**. It builds the app, then
+   finds the shared `release.command` in this folder or a parent folder and
+   runs it to sign, notarize and staple the app. The shared script expects a
+   Developer ID Application certificate and a `cnf-notary` keychain profile.
+2. The shared signer finds `macos/entitlements.plist` one level above `dist/`
+   and signs nested code first. The build checks the final Developer ID and
+   hardened-runtime signatures and both Python entitlements on the bundled
+   server, nested libraries, Swift executable and app. It also validates the
+   app's notarization staple.
+3. Double-click **Make Second Hand Smoke DMG.command**. It packages the existing
+   app in `dist/` and refuses a version mismatch, an ad-hoc signature or an
+   invalid staple. It signs the DMG with the app's Developer ID identity by
+   default, submits it for notarization, staples it and validates the staple.
+   The basename-only `.sha256` is written last, after stapling.
+
+The DMG command defaults to `cnf-notary`. For a different DMG signing identity
+or keychain profile, run it from Terminal with the overrides:
 
 ```bash
-xcrun notarytool store-credentials "cnfworks" --apple-id ... --team-id ... --password ...
 CODESIGN_IDENTITY="Developer ID Application: NAME (TEAMID)" \
 NOTARY_PROFILE=cnfworks ./macos/make_dmg.sh
 ```
 
-You get `dist/Second Hand Smoke.app`, `dist/SecondHandSmoke-<version>.dmg` and
-a `.sha256` beside it. Test the DMG in a clean macOS account before publishing.
-Notarization is the only thing that prevents the unidentified-developer warning
-for people who download it.
+Before publishing, install from the DMG in a clean macOS account and open the
+app to confirm its server starts. On the installed app, run
+`spctl -a -vv "/Applications/Second Hand Smoke.app"` and
+`xcrun stapler validate "/Applications/Second Hand Smoke.app"`.
 
 ## Permissions
 
@@ -106,6 +118,7 @@ build script bundles it automatically and builds fine without it.
 
 ## Server log
 
-Each launch writes `~/Library/Logs/Second Hand Smoke/server.log`, and the app
-menu has **Reveal Server Log in Finder**. That is the file to ask for when
+Each launch writes `Second Hand Smoke/Logs/server.log` under the resolved
+`CnF-Libraries-Installs` folder, usually in your home folder. The app menu
+has **Reveal Server Log in Finder**. That is the file to ask for when
 something goes wrong on someone else's machine.

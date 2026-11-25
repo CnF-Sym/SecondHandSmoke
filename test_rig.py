@@ -20,6 +20,7 @@ import csv
 import getpass
 import json
 import os
+import plistlib
 import re as _re
 import shutil
 import sqlite3
@@ -29,11 +30,14 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from fractions import Fraction
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
+from PIL import Image
 
 
-RIG = os.path.realpath(tempfile.mkdtemp(prefix="cf-smoker-rig-"))
+RIG = os.path.realpath(tempfile.mkdtemp(prefix="second-hand-smoke-rig-"))
 if os.environ.get("DIT_KEEP_TEST_RIG") == "1":
     print(f"RIG_ROOT={RIG}")
 else:
@@ -397,9 +401,47 @@ check("second physical destination added", s == 200, j)
 check("environment cannot lower the two-copy floor", reports.MIN_VERIFIED_COPIES == 2)
 
 print("\n[2] scan + register")
+# Model a card on another partition of a destination drive and a scan
+# root that also contains a destination folder. Neither can reach ingest.
+same_drive_media = write_fixture("SAME_DRIVE/card.mxf", 11)
+overlap = os.path.join(CARDS, "DEST_OVERLAP")
+overlap_media = write_fixture("DEST_OVERLAP/card.mxf", 12)
+os.mkdir(os.path.join(CARDS, "EMPTY_SAME_DRIVE"))
+same_drive_fp = application.cards.inspect_volume(os.path.dirname(same_drive_media))["fingerprint"]
+overlap_fp = application.cards.inspect_volume(overlap)["fingerprint"]
+def scan_device(path):
+    info = fake_inspect_path(path)
+    if os.path.basename(path) in ("SAME_DRIVE", "EMPTY_SAME_DRIVE"):
+        info["device_id"] = "test:drive-a"
+    return info
+
+with patch.object(storage, "inspect_path", side_effect=scan_device):
+    check("the overlap fixture is configured as a named destination",
+          post("/api/destination", path=overlap, label="SHOW_OVERLAP")[0] == 200)
+    status, skipped = get("/api/scan")
+    problems = skipped["problems"]
+    check("a skipped card names the destination on its physical drive",
+          status == 200 and any("SAME_DRIVE:" in p and "same physical drive" in p
+                                and "DRIVE_A" in p for p in problems), problems)
+    check("a destination drive holding footage is skipped quietly, not reported as a problem",
+          not any("DEST_OVERLAP" in p for p in problems), problems)
+    check("an excluded volume without media does not look like a skipped card",
+          not any("EMPTY_SAME_DRIVE" in p for p in problems))
+    check("skipped cards never appear in scan results",
+          not {"SAME_DRIVE", "DEST_OVERLAP"} & {card["label"] for card in skipped["cards"]})
+    check("skipped cards cannot be ingested using their fingerprints",
+          all(post("/api/ingest", fingerprint=fp)[0] == 400
+              for fp in (same_drive_fp, overlap_fp)))
+    overlap_id = db.q1("SELECT id FROM destinations WHERE label='SHOW_OVERLAP'")["id"]
+    c.delete(f"/api/destination/{overlap_id}", json={})
+for path in (os.path.dirname(same_drive_media), os.path.dirname(overlap_media),
+             os.path.join(CARDS, "EMPTY_SAME_DRIVE")):
+    shutil.rmtree(path)
+
 s, j = get("/api/scan")
 found = {item["label"]: item for item in j["cards"]}
 check("two cards found", len(found) == 2, list(found))
+check("a new card is not marked clear by the scan", not found["A001_CFEXPRESS"]["safe"])
 check("camera card classified", found["A001_CFEXPRESS"]["kind"] == "camera")
 check("roll parsed from clip name", found["A001_CFEXPRESS"]["roll"] == "A001")
 check("sound card classified", found["SOUND_01"]["kind"] == "sound")
@@ -520,6 +562,10 @@ check("MHL is well-formed XML",
 check("and the 2.0 manifest covers the same eight files",
       len(ET.parse(modern_paths[0]).getroot()
           .findall("{urn:ASC:MHL:v2.0}hashes/{urn:ASC:MHL:v2.0}hash")) == 8)
+_, cleared_scan = get("/api/scan")
+cleared = next(item for item in cleared_scan["cards"] if item["card_id"] == cam_id)
+check("the scan reports the format gate verdict for a cleared card",
+      cleared["safe"] and not cleared["with_exclusions"], cleared)
 before = db.q1("SELECT COUNT(*) c FROM copies WHERE state='verified'")["c"]
 s, j = post(f"/api/offload/{cam_id}")
 wait_job()
@@ -1506,8 +1552,10 @@ os.chmod(fake_ffmpeg, 0o755)
 
 saved_path = os.environ.get("PATH", "")
 saved_dirs = toolpaths.FALLBACK_DIRS
+empty_bin = os.path.join(RIG, "empty_bin")
+os.mkdir(empty_bin)
 try:
-    os.environ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    os.environ["PATH"] = empty_bin
     toolpaths.FALLBACK_DIRS = (fake_bin,)
     check("ffmpeg is found off PATH, as when launched from Finder",
           toolpaths.ffmpeg() == fake_ffmpeg, str(toolpaths.ffmpeg()))
@@ -1521,7 +1569,7 @@ finally:
 # A non-executable file of the right name is not a usable tool.
 os.chmod(fake_ffmpeg, 0o644)
 try:
-    os.environ["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+    os.environ["PATH"] = empty_bin
     toolpaths.FALLBACK_DIRS = (fake_bin,)
     check("a non-executable file of the right name is not accepted",
           toolpaths.ffmpeg() is None, str(toolpaths.ffmpeg()))
@@ -1588,6 +1636,57 @@ second = subprocess.run(
 check("the lock is released when the server that held it exits",
       second.returncode == 0, second.stderr.strip())
 
+# Use a disposable bundle, so the check exercises the real macOS signature
+# command without requiring a Developer ID certificate or touching dist/.
+if sys.platform == "darwin":
+    release_root = Path(RIG) / "release-check"
+    release_scripts = release_root / "macos"
+    release_scripts.mkdir(parents=True)
+    for script in ("make_dmg.sh", "verify_release_app.sh"):
+        shutil.copyfile(Path("macos") / script, release_scripts / script)
+    release_version = (Path("VERSION").read_text()).strip()
+    (release_root / "VERSION").write_text(release_version)
+    fixture_app = release_root / "dist" / "Second Hand Smoke.app"
+    fixture_exe = fixture_app / "Contents" / "MacOS" / "fixture"
+    fixture_exe.parent.mkdir(parents=True)
+    shutil.copyfile("/usr/bin/true", fixture_exe)
+    fixture_exe.chmod(0o755)
+    fixture_plist = fixture_app / "Contents" / "Info.plist"
+    info = {"CFBundleExecutable": "fixture", "CFBundleIdentifier": "test.shs.fixture",
+            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.0.0"}
+    fixture_plist.write_bytes(plistlib.dumps(info))
+    dmg_command = ["/bin/bash", str(release_scripts / "make_dmg.sh")]
+    wrong_version = subprocess.run(dmg_command, capture_output=True, text=True)
+    check("the DMG script refuses a mismatched app version",
+          wrong_version.returncode != 0 and "REFUSING TO PACKAGE" in wrong_version.stderr,
+          wrong_version.stderr.strip())
+    info["CFBundleShortVersionString"] = release_version
+    fixture_plist.write_bytes(plistlib.dumps(info))
+    fixture_signature = subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(fixture_app)],
+                                       capture_output=True, text=True)
+    adhoc = subprocess.run(dmg_command, capture_output=True, text=True)
+    check("the DMG script refuses an ad-hoc signed app",
+          fixture_signature.returncode == 0 and adhoc.returncode != 0
+          and "needs a Developer ID Application signature" in adhoc.stderr
+          and not list(fixture_app.parent.glob("*.dmg*")),
+          (fixture_signature.stderr + adhoc.stderr).strip())
+
+dmg_source = Path("macos/make_dmg.sh").read_text()
+check("the DMG is packaged from the signed app without rebuilding",
+      "build_macos_app.sh" not in dmg_source
+      and dmg_source.index("verify_release_app.sh") < dmg_source.index("hdiutil create"))
+check("the DMG is signed, notarized and stapled before the single basename-only checksum",
+      dmg_source.count("shasum -a 256") == 1
+      and dmg_source.index("codesign --sign") < dmg_source.index("notarytool submit")
+      < dmg_source.index("stapler staple") < dmg_source.index("stapler validate")
+      < dmg_source.index('shasum -a 256 "$NAME"'))
+release_checks = Path("macos/verify_release_app.sh").read_text()
+check("the build and DMG both check final runtime entitlements on nested code and the app",
+      "verify_release_app.sh" in Path("Build Second Hand Smoke.command").read_text()
+      and "SecondHandSmoke-server" in release_checks and "Contents/MacOS/SecondHandSmoke" in release_checks
+      and all(token in release_checks for token in ("*.so", "*.dylib", 'verify "$APP"',
+          "disable-library-validation", "allow-dyld-environment-variables", "stapler validate")))
+
 print("\n[22] the support address reaches every surface")
 
 # One definition, three places it has to appear. A DIT at 4am should find it on
@@ -1599,6 +1698,21 @@ check("there is a support address to publish", "@" in address, address)
 home_page = c.get("/").data.decode("utf-8", "replace")
 check("the interface footer carries the support address", address in home_page)
 check("the interface footer carries the version", version.VERSION in home_page)
+
+# Force an unexpected exception inside an existing route with a temporary data root.
+log_root = Path(RIG) / "custom-CnF-Libraries-Installs"
+with patch.object(application.cnf_libraries, "root", return_value=log_root):
+    with patch.object(application.cards, "scan", side_effect=RuntimeError("rig forced 500")):
+        status, error_body = get("/api/scan")
+error_text = error_body.get("error", "")
+check("a forced 500 points to the resolved log and the Finder menu",
+      status == 500 and str(log_root / "Second Hand Smoke/Logs/server.log") in error_text
+      and "Reveal Server Log in Finder" in error_text and "Library/Logs" not in error_text,
+      error_text)
+with Image.open("assets/logo-header.png") as header_logo:
+    check("the bundled header uses a 320 px derivative of the full logo",
+          '/static/brand/logo-header.png' in home_page and header_logo.width == 320
+          and Path("assets/logo-header.png").stat().st_size < Path("assets/logo.png").stat().st_size / 4)
 
 report_path, report_body = reports.day_report(day_id)
 check("the day report carries the support address", address in report_body)
@@ -1893,8 +2007,9 @@ check("phases that cannot run yet are dimmed rather than removed",
           for name in ("syncPanel", "proxyPanel", "handoffPanel")))
 check("the accent stripe is status, not decoration",
       ".panel.waiting{--panel-accent" in ui_css)
-check("sync, proxies and handoff wait on a cleared card",
-      "anyCleared" in ui_js and ui_js.count("setWaiting(") >= 5)
+check("sync, proxies and handoff each wait on a cleared card",
+      all(f'setWaiting("{id}", !anyCleared);' in ui_js
+          for id in ("syncPanel", "proxyPanel", "handoffPanel")))
 check("a first run explains what a shoot day even is",
       'id="firstRun"' in ui_html and "firstRun" in ui_js)
 
@@ -1911,7 +2026,7 @@ check("the control says which panel it opens, not just \u201cShow\u201d",
       'aria-label", `Show ${heading' in ui_js)
 check("and reports its state to assistive technology",
       'aria-expanded' in ui_js)
-check("a panel unfolds itself the moment its phase becomes reachable",
+check("a workflow panel unfolds itself the moment its phase becomes reachable",
       'panel.classList.remove("open")' in ui_js
       and "stale.remove()" in ui_js)
 check("the fold is not rebuilt on every poll, which would shut it "
@@ -1922,7 +2037,7 @@ check("the fold is not rebuilt on every poll, which would shut it "
 # something usable, which is the failure this replaced, not a smaller version
 # of it.
 folded_panels = set(_re.findall(r'setWaiting\("(\w+)"', ui_js))
-check("every folding panel is one that really cannot run yet",
+check("only prerequisite-driven workflow panels and optional setup panels fold",
       folded_panels == {"syncPanel", "proxyPanel", "handoffPanel",
                         "reportPanel", "presetPanel", "namingPanel"},
       ", ".join(sorted(folded_panels)))
@@ -1931,6 +2046,30 @@ check("and nothing that works without a shoot day is ever folded",
                             "problemPanel", "jobPanel"}),
       ", ".join(sorted(folded_panels & {"libraryPanel", "drivePanel",
                                         "catalogPanel"})))
+
+check("setup panels stay collapsed until opened and keep their session choice",
+      all(f'setWaiting("{id}", !s.day, true);' in ui_js
+          for id in ("presetPanel", "namingPanel", "reportPanel"))
+      and "const openSetupPanels = new Set();" in ui_js
+      and ".panel.setup-fold:not(.open)" in ui_css and "if (!waiting && !setup)" in ui_js)
+check("Destinations follows Shoot Day before optional setup panels",
+      ui_html.index("Shoot day</h2>") < ui_html.index("Destinations — 2 drives")
+      < ui_html.index("Card in the reader</h2>") < ui_html.index('id="presetPanel"'))
+check("the active day shows its identity and checksum while New day opens the form",
+      'id="activeDaySummary"' in ui_html and 'id="checksumChoice"' in ui_html
+      and 'aria-controls="newDayForm"' in ui_html and 'renderDay(s.day)' in ui_js
+      and 'Boolean(day) && !newDayOpen' in ui_js)
+check("the scan renders a quiet verify-only action for cleared cards",
+      'const actions = c.safe' in ui_js and "Cleared with exclusions" in ui_js
+      and """class="btn sm ghost" onclick="offload(${c.card_id},'verify')">Re-verify""" in ui_js
+      and 'class="btn go" onclick="ingestCard(' in ui_js)
+check("disabled controls remain readable and explain missing sync or clips",
+      ".btn:disabled{opacity:.55" in ui_css and "waveformButton.title" in ui_js
+      and "Sync the day's footage first." in ui_js and "No camera clips catalogued yet." in ui_js)
+check("each panel with longer help keeps it behind a More control",
+      all('<summary>More</summary>' in ui_html.split(f'id="{id}"', 1)[1].split("</section>", 1)[0]
+          for id in ("presetPanel", "namingPanel", "reportPanel",
+                     "libraryPanel", "catalogPanel", "drivePanel")))
 
 # The wordmark was pulling the eye away from the thing that orients you.
 check("the logo does not out-shout the track",
@@ -3696,6 +3835,57 @@ check("the copy is taken through SQLite, not with a file copy",
       "conn().backup(target)" in db_source,
       "cp on a live database can produce a file torn halfway through a write")
 
+
+legacy_root = Path(RIG) / "legacy-home"
+legacy_folder = legacy_root / "SecondHandSmoke"
+legacy_folder.mkdir(parents=True)
+old_logo = legacy_folder / "branding/logo.png"
+moved_root = Path(RIG) / "legacy-CnF-Libraries-Installs"
+moved_folder = moved_root / "Second Hand Smoke"
+moved_db = moved_folder / "catalog.db"
+with sqlite3.connect(legacy_folder / "catalog.db") as old_catalog:
+    old_catalog.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    old_catalog.execute("INSERT INTO settings VALUES ('legacy_logo', ?)", (str(old_logo),))
+
+legacy_env = dict(os.environ, HOME=str(legacy_root), CNF_LIBRARIES_INSTALLS=str(moved_root))
+legacy_env.pop("DIT_DB")
+read_logo = "SELECT value FROM settings WHERE key='legacy_logo'"
+legacy_import = subprocess.run([sys.executable, "-c", "import db"],
+                               env=legacy_env, capture_output=True, text=True)
+with sqlite3.connect(moved_db) as catalog:
+    before_init = catalog.execute(read_logo).fetchone()[0]
+check("importing the database moves the legacy folder without rewriting the catalog",
+      legacy_import.returncode == 0 and before_init == str(old_logo), legacy_import.stderr)
+
+legacy_init = subprocess.run([sys.executable, "-c", """
+from pathlib import Path
+from unittest.mock import patch
+import db
+import server_main
+
+held = server_main.claim_single_instance()
+with patch.object(db, "backup", side_effect=OSError("rig backup failure")):
+    db.init()
+assert db.setting("legacy_logo").startswith(db.LEGACY_DATA_DIR + "/")
+repoint = db.cnf_libraries.repoint_once
+def after_backup(path, old, new):
+    assert list((Path(db.DB_PATH).parent / "backups").glob("*before-upgrade.db"))
+    repoint(path, old, new)
+with patch.object(db.cnf_libraries, "repoint_once", side_effect=after_backup):
+    db.init()
+"""], env=legacy_env, capture_output=True, text=True)
+backup_paths = list((moved_folder / "backups").glob("*before-upgrade.db"))
+with sqlite3.connect(moved_db) as migrated_db:
+    rewritten = migrated_db.execute(read_logo).fetchone()[0]
+backup_logo = None
+if backup_paths:
+    with sqlite3.connect(backup_paths[0]) as backup_db:
+        backup_logo = backup_db.execute(read_logo).fetchone()[0]
+check("a legacy path is repointed only after a successful backup under the server lock",
+      legacy_init.returncode == 0 and rewritten == str(moved_folder / "branding/logo.png"),
+      legacy_init.stderr)
+check("the before-upgrade backup still holds the original legacy path",
+      backup_logo == str(old_logo), backup_logo)
 
 _CRASHED = False    # reached the end: whatever happened, it was not a crash
 print("\n" + ("SOME CHECKS FAILED" if FAILED else "ALL CHECKS PASSED") + "\n")

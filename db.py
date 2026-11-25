@@ -44,10 +44,6 @@ def _default_db_path():
 
 
 DB_PATH = os.environ.get("DIT_DB") or _default_db_path()
-if not os.environ.get("DIT_DB"):
-    # Logos are stored by full path (settings + presets); after the move, point them at the new folder.
-    cnf_libraries.repoint_once(Path(DB_PATH), [Path(LEGACY_DATA_DIR)], Path(DB_PATH).parent)
-
 # Catalog locations used by earlier builds, newest first. If one of these still
 # holds a database and the current location is empty, it is moved across on
 # first use rather than silently starting the shoot with a blank catalog.
@@ -478,7 +474,7 @@ def backup(reason="manual"):
     """
     folder = backup_dir()
     os.makedirs(folder, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S.%fZ")
     path = os.path.join(folder, f"catalog_{stamp}_{reason}.db")
     partial = path + ".partial"
     target = sqlite3.connect(partial)
@@ -530,6 +526,7 @@ def backups():
 
 
 def init():
+    _migrate_legacy_catalog()
     # A migration is the one moment this program rewrites the catalog's shape.
     # If a column add goes wrong on somebody's disk, the version before it is
     # the only way back — and nobody takes a backup before an upgrade they did
@@ -541,6 +538,12 @@ def init():
             # A backup that cannot be taken must not stop the program starting.
             # It is reported at startup instead; see server_main.
             pass
+        else:
+            if not os.environ.get("DIT_DB"):
+                # Logo paths need repointing after the folder move. Keep the
+                # original paths in the backup in case the upgrade fails.
+                path = Path(DB_PATH)
+                cnf_libraries.repoint_once(path, [Path(LEGACY_DATA_DIR)], path.parent)
     conn().executescript(SCHEMA)
     _add_column("destinations", "canonical_path", "TEXT")
     _add_column("destinations", "device_id", "TEXT")

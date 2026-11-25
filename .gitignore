@@ -43,6 +43,7 @@ dailies/
 
 # Internal scaffolding, not part of the release
 _NEXT_SESSION_PROMPT.md
+_BETA_FIXES_FOR_CHATGPT.md
 
 # Added by GYST cleanup (Nov 2026)
 .env

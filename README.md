@@ -45,7 +45,7 @@ drive, and cancels jobs mid-write. After each one it checks that the format
 gate closed, that the reason given is the right reason, and that nothing on the
 simulated card was touched.
 
-More than **550 checks across 40 sections**. The ones that matter most:
+More than **600 checks across 40 sections**. The ones that matter most:
 
 | Section | What it proves |
 |---|---|
@@ -172,9 +172,9 @@ manifests and the format gate all work exactly as normal; metadata, ProRes
 proxies, timecode sync, the waveform fallback and dailies are unavailable, and
 the interface says so rather than failing quietly.
 
-Each launch writes a log to `~/CnF-Libraries-Installs/Second Hand Smoke/Logs/server.log`, and
-the app menu has **Reveal Server Log in Finder**. That is the file to send if
-something goes wrong.
+Each launch writes `Second Hand Smoke/Logs/server.log` under the resolved
+`CnF-Libraries-Installs` folder, usually in your home folder. Use **Reveal
+Server Log in Finder** in the app menu to find the file for support.
 
 ### Running from source instead
 
@@ -198,8 +198,11 @@ page — so a web page open in another tab cannot reach in and stop an offload.
 
 ### Building the app yourself
 
-See [`macos/README.md`](macos/README.md). Short version: install the Xcode
-Command Line Tools and double-click **Build Second Hand Smoke.command**.
+Install the Xcode Command Line Tools, then double-click **Build Second Hand
+Smoke.command** to build, sign, notarize and staple the app. Once it succeeds,
+double-click **Make Second Hand Smoke DMG.command** to package the signed app.
+The DMG command signs, notarizes and staples the image before writing its
+checksum. See the signing setup in [`macos/README.md`](macos/README.md).
 
 ### Environment variables
 
@@ -823,7 +826,7 @@ out of scope.
 | `requirements.txt` | Locked major versions for Python dependencies |
 | `start.command` | Double-clickable launcher, for running from source |
 | `Build Second Hand Smoke.command` | Double-clickable app build |
-| `Make Second Hand Smoke DMG.command` | Double-clickable release build |
+| `Make Second Hand Smoke DMG.command` | Packages the signed app and signs, notarizes and staples the DMG |
 | `push.command` | Double-clickable git commit and push |
 | `ROADMAP.md` | Where this is going, and what it will never do |
 | `assets/` | The wordmark and application icon |
@@ -856,7 +859,8 @@ immediately and everything else waits.
 
 When you write, the useful things to include are the version from the footer,
 what you were doing, and — if the app would not start —
-`~/CnF-Libraries-Installs/Second Hand Smoke/Logs/server.log`. Never send footage.
+`Second Hand Smoke/Logs/server.log` under the resolved
+`CnF-Libraries-Installs` folder. Never send footage.
 
 Bugs and feature requests are also welcome as
 [GitHub issues](https://github.com/CnF-Sym/SecondHandSmoke/issues), which have

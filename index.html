@@ -12,8 +12,8 @@
 
 <header>
   <div class="brand">
-    <img class="brand-logo" src="/static/brand/logo.png"
-         alt="Second Hand Smoke" width="900" height="415">
+    <img class="brand-logo" src="/static/brand/logo-header.png"
+         alt="Second Hand Smoke" width="320" height="180">
     <span class="brand-lockup">
       <span class="brand-sub">VERIFIED CARD OFFLOAD</span>
       <span class="brand-pub">A <b>CnF Works</b> Project</span>
@@ -38,89 +38,24 @@
         Name it, add two drives, then put a card in the reader.
       </p>
       <div id="daySwitch" class="chips"></div>
-      <div class="field-row">
-        <input id="dayProject" placeholder="Project" value="PROJECT_01" aria-label="Project name">
-        <input id="dayName" placeholder="DAY_01" aria-label="Shoot day name">
-        <input id="dayDate" type="date" aria-label="Shoot date">
+      <div id="activeDay" hidden>
+        <p class="note" id="activeDaySummary"></p>
+        <div class="field-row">
+          <label class="field-label" for="checksumChoice">Checksum</label>
+          <select id="checksumChoice" onchange="saveChecksum()"></select>
+          <button class="btn sm ghost" id="newDayButton" type="button" onclick="toggleNewDay()"
+                  aria-controls="newDayForm" aria-expanded="false">New day…</button>
+        </div>
+        <p class="note" id="checksumNote"></p>
       </div>
-      <button class="btn" onclick="createDay()">Start day</button>
-      <div class="field-row">
-        <label class="field-label" for="checksumChoice">Checksum</label>
-        <select id="checksumChoice" onchange="saveChecksum()"></select>
+      <div id="newDayForm">
+        <div class="field-row">
+          <input id="dayProject" placeholder="Project" value="PROJECT_01" aria-label="Project name">
+          <input id="dayName" placeholder="DAY_01" aria-label="Shoot day name">
+          <input id="dayDate" type="date" aria-label="Shoot date">
+        </div>
+        <button class="btn" onclick="createDay()">Start day</button>
       </div>
-      <p class="note" id="checksumNote"></p>
-    </section>
-
-    <section class="panel" id="presetPanel">
-      <h2>Presets</h2>
-      <p class="note">Save this day's drives and report branding, and put them
-        back on tomorrow's day in one click. A preset never changes how a card
-        is verified — drives it adds go through exactly the same checks as
-        drives you add by hand.</p>
-      <div id="presetList"></div>
-      <p class="note" id="presetResult" hidden></p>
-      <div class="field-row">
-        <input id="presetName" placeholder="Preset name, e.g. SHOW A — three drives" aria-label="Preset name">
-        <select id="presetFolder" style="max-width:170px" aria-label="Preset folder"></select>
-      </div>
-      <button class="btn ghost" onclick="savePreset()">Save this day as a preset</button>
-      <div class="field-row">
-        <input id="presetFolderName" placeholder="New folder, e.g. Season 2" aria-label="New preset folder name">
-        <button class="btn ghost sm" onclick="addPresetFolder()"
-          style="max-width:120px">Add folder</button>
-      </div>
-    </section>
-
-    <section class="panel" id="namingPanel">
-      <h2>Naming &amp; filtering</h2>
-      <p class="note">Standardise names across cameras. Renaming happens on the
-        destination only — the card is never written to, and the manifest records
-        both the original name and the new one. A filter that skips files is
-        recorded: those files are listed on the card, in the report and beside
-        the manifest, and the card can never read plain SAFE TO FORMAT again.</p>
-      <div class="field-row">
-        <input id="patternCamera" placeholder="Camera pattern, e.g. {day}_{roll}_{index}" aria-label="Camera file naming pattern">
-      </div>
-      <div class="field-row">
-        <input id="patternSound" placeholder="Sound pattern, e.g. {roll}_{scene}_{take}" aria-label="Sound file naming pattern">
-      </div>
-      <div class="field-row">
-        <input id="filterCamera" placeholder="Camera filter, e.g. -*.THM, -*/PROXY/*" aria-label="Camera file filter">
-      </div>
-      <div class="field-row">
-        <input id="filterSound" placeholder="Sound filter, e.g. -*.tmp" aria-label="Sound file filter">
-      </div>
-      <p class="note warn" id="filterWarning" hidden></p>
-      <button class="btn ghost" onclick="saveNaming()">Save naming</button>
-      <button class="btn ghost" onclick="previewNaming()">Preview names</button>
-      <p class="note" id="namingTokens"></p>
-      <div id="namingPreview"></div>
-    </section>
-
-    <section class="panel" id="reportPanel">
-      <h2>Reports</h2>
-      <p class="note" id="pdfNote"></p>
-      <div class="field-row">
-        <input id="reportProduction" placeholder="Production name — printed on the PDF" aria-label="Production name printed on reports">
-      </div>
-      <div class="field-row">
-        <input id="reportLogo" placeholder="Logo image — choose, drop, or type a path" aria-label="Path to the logo image for reports">
-        <button class="btn ghost sm" onclick="pickLogo()" style="max-width:110px">Choose…</button>
-      </div>
-      <input type="file" id="logoFile" accept="image/png,image/jpeg,image/tiff,image/heic,image/webp"
-             hidden onchange="logoChosen(this)" aria-label="Choose a logo image file">
-      <div class="logo-drop" id="logoDrop">
-        <img class="logo-preview" id="logoPreview" alt="Current report logo" hidden>
-        <span id="logoDropText">Drop a logo image here, or choose one above</span>
-        <button class="btn ghost sm" id="logoRemove" onclick="removeLogo()" hidden>Remove</button>
-      </div>
-      <button class="btn ghost" onclick="saveBranding()">Save branding</button>
-      <button class="btn ghost" id="pdfTableButton" onclick="openPdf('table')"
-        disabled>Verification PDF</button>
-      <button class="btn ghost" id="pdfMetaButton" onclick="openPdf('metadata')"
-        disabled>Metadata PDF</button>
-      <button class="btn ghost" id="pdfThumbButton" onclick="openPdf('thumbnail')"
-        disabled>Thumbnail PDF</button>
     </section>
 
     <section class="panel accent-dest">
@@ -145,6 +80,90 @@
       <p class="note">Scanning <code id="scanRoot">/Volumes</code></p>
       <button class="btn" onclick="scan()" style="margin-bottom:12px">Scan for cards</button>
       <div id="scanList"><p class="empty">Insert a card and scan.</p></div>
+    </section>
+
+    <section class="panel" id="presetPanel">
+      <h2>Presets</h2>
+      <p class="note">Save this day's drives and report branding, and put them
+        back on tomorrow's day in one click.</p>
+      <details class="panel-help">
+        <summary>More</summary>
+        <p class="note">A preset never changes how a card
+        is verified — drives it adds go through exactly the same checks as
+        drives you add by hand.</p>
+      </details>
+      <div id="presetList"></div>
+      <p class="note" id="presetResult" hidden></p>
+      <div class="field-row">
+        <input id="presetName" placeholder="Preset name, e.g. SHOW A — three drives" aria-label="Preset name">
+        <select id="presetFolder" style="max-width:170px" aria-label="Preset folder"></select>
+      </div>
+      <button class="btn ghost" onclick="savePreset()">Save this day as a preset</button>
+      <div class="field-row">
+        <input id="presetFolderName" placeholder="New folder, e.g. Season 2" aria-label="New preset folder name">
+        <button class="btn ghost sm" onclick="addPresetFolder()"
+          style="max-width:120px">Add folder</button>
+      </div>
+    </section>
+
+    <section class="panel" id="namingPanel">
+      <h2>Naming &amp; filtering</h2>
+      <p class="note">Standardise names across cameras.</p>
+      <details class="panel-help">
+        <summary>More</summary>
+        <p class="note">Renaming happens on the
+        destination only — the card is never written to, and the manifest records
+        both the original name and the new one. A filter that skips files is
+        recorded: those files are listed on the card, in the report and beside
+        the manifest, and the card can never read plain SAFE TO FORMAT again.</p>
+      </details>
+      <div class="field-row">
+        <input id="patternCamera" placeholder="Camera pattern, e.g. {day}_{roll}_{index}" aria-label="Camera file naming pattern">
+      </div>
+      <div class="field-row">
+        <input id="patternSound" placeholder="Sound pattern, e.g. {roll}_{scene}_{take}" aria-label="Sound file naming pattern">
+      </div>
+      <div class="field-row">
+        <input id="filterCamera" placeholder="Camera filter, e.g. -*.THM, -*/PROXY/*" aria-label="Camera file filter">
+      </div>
+      <div class="field-row">
+        <input id="filterSound" placeholder="Sound filter, e.g. -*.tmp" aria-label="Sound file filter">
+      </div>
+      <p class="note warn" id="filterWarning" hidden></p>
+      <button class="btn ghost" onclick="saveNaming()">Save naming</button>
+      <button class="btn ghost" onclick="previewNaming()">Preview names</button>
+      <p class="note" id="namingTokens"></p>
+      <div id="namingPreview"></div>
+    </section>
+
+    <section class="panel" id="reportPanel">
+      <h2>Reports</h2>
+      <p class="note" id="pdfNote"></p>
+      <details class="panel-help" id="pdfHelp" hidden>
+        <summary>More</summary>
+        <p class="note" id="pdfHelpText"></p>
+      </details>
+      <div class="field-row">
+        <input id="reportProduction" placeholder="Production name — printed on the PDF" aria-label="Production name printed on reports">
+      </div>
+      <div class="field-row">
+        <input id="reportLogo" placeholder="Logo image — choose, drop, or type a path" aria-label="Path to the logo image for reports">
+        <button class="btn ghost sm" onclick="pickLogo()" style="max-width:110px">Choose…</button>
+      </div>
+      <input type="file" id="logoFile" accept="image/png,image/jpeg,image/tiff,image/heic,image/webp"
+             hidden onchange="logoChosen(this)" aria-label="Choose a logo image file">
+      <div class="logo-drop" id="logoDrop">
+        <img class="logo-preview" id="logoPreview" alt="Current report logo" hidden>
+        <span id="logoDropText">Drop a logo image here, or choose one above</span>
+        <button class="btn ghost sm" id="logoRemove" onclick="removeLogo()" hidden>Remove</button>
+      </div>
+      <button class="btn ghost" onclick="saveBranding()">Save branding</button>
+      <button class="btn ghost" id="pdfTableButton" onclick="openPdf('table')"
+        disabled>Verification PDF</button>
+      <button class="btn ghost" id="pdfMetaButton" onclick="openPdf('metadata')"
+        disabled>Metadata PDF</button>
+      <button class="btn ghost" id="pdfThumbButton" onclick="openPdf('thumbnail')"
+        disabled>Thumbnail PDF</button>
     </section>
 
   </div>
@@ -213,22 +232,25 @@
     <section class="panel" id="libraryPanel">
       <h2>Library</h2>
       <p class="note">Everything this program has ever copied, across every
-        shoot day. Read-only: searching here never changes a card's verdict.</p>
+        shoot day.</p>
+      <details class="panel-help">
+        <summary>More</summary>
+        <p class="note">Read-only: searching here never changes a card's verdict.</p>
+        <p class="note">Every row shows two numbers.
+          <b>Verified</b> is how many separate physical drives the file was read
+          back and checksum-matched on — a fact from the catalog, true whether or
+          not anything is plugged in. <b>Present</b> is how many of those drives
+          are connected right now and still have a file of the right size at the
+          right path. Present is a size check, not a checksum, and it is never
+          higher than verified. Two verified and none present just means the
+          drives are on a shelf.</p>
+      </details>
 
       <div class="field-row">
         <input id="librarySearchBox" placeholder="Roll, scene, take, camera, clip name…"
                onkeydown="if(event.key==='Enter')librarySearch()" aria-label="Search the library">
         <button class="btn ghost" onclick="librarySearch()">Search</button>
       </div>
-
-      <p class="note">Every row shows two numbers.
-        <b>Verified</b> is how many separate physical drives the file was read
-        back and checksum-matched on — a fact from the catalog, true whether or
-        not anything is plugged in. <b>Present</b> is how many of those drives
-        are connected right now and still have a file of the right size at the
-        right path. Present is a size check, not a checksum, and it is never
-        higher than verified. Two verified and none present just means the
-        drives are on a shelf.</p>
 
       <div class="field-row">
         <label class="field-label" for="libraryMin">On fewer than</label>
@@ -251,11 +273,15 @@
     <section class="panel" id="catalogPanel">
       <h2>Catalog</h2>
       <p class="note">The catalog is this program's record of every file, hash
-        and drive. Losing it does not lose footage — your media and manifests
+        and drive.</p>
+      <details class="panel-help">
+        <summary>More</summary>
+        <p class="note">Losing it does not lose footage — your media and manifests
         are on the drives, and the format gate reads the catalog rather than
         the other way round — but it loses the library, the gate's history and
         every sync decision. A backup is taken automatically before any
         upgrade; this is the button for every other time.</p>
+      </details>
       <p class="note" id="catalogState"></p>
       <button class="btn ghost" onclick="catalogBackup()">Back up now</button>
       <div id="catalogBackups"></div>
@@ -263,9 +289,13 @@
 
     <section class="panel" id="drivePanel">
       <h2>Drive tools</h2>
-      <p class="note">How fast is this drive, and what is already on it. The
+      <p class="note">How fast is this drive, and what is already on it.</p>
+      <details class="panel-help">
+        <summary>More</summary>
+        <p class="note">The
         speed test writes its own scratch file and removes it; indexing only
         reads. Neither changes anything about a card.</p>
+      </details>
       <div class="field-row">
         <input id="drivePath" placeholder="/Volumes/SHOW_A" aria-label="Drive folder to test or index">
         <input id="driveLabel" placeholder="Label" style="max-width:150px" aria-label="Drive label">

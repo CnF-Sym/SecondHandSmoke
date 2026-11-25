@@ -40,6 +40,7 @@ SKIP_NAMES = {
     "iSCPreboot", "Hardware", "Data", "com.apple.TimeMachine.localsnapshots",
 }
 SKIP_PREFIXES = ("/System",)
+SKIP_FOLDERS = {".Spotlight-V100", ".fseventsd", ".TemporaryItems", ".Trashes"}
 SAMPLE_BYTES = 64 * 1024
 
 
@@ -86,8 +87,7 @@ def walk_volume(root):
                     f"Symbolic link is not safe to ingest: "
                     f"{os.path.relpath(full_dir, root)}"
                 )
-        dirnames[:] = [d for d in dirnames if d not in (".Spotlight-V100", ".fseventsd",
-                                                        ".TemporaryItems", ".Trashes")
+        dirnames[:] = [d for d in dirnames if d not in SKIP_FOLDERS
                       and not os.path.islink(os.path.join(dirpath, d))]
         for fn in filenames:
             if fn.startswith("._") or fn in (".DS_Store", ".metadata_never_index"):
@@ -198,13 +198,29 @@ def inspect_volume(path):
     }
 
 
-def scan(root=None, exclude_paths=(), exclude_device_ids=()):
+def _has_media(path):
+    # A skipped destination can contain a whole shoot. Stop at the first
+    # media file without opening it or fingerprinting the drive.
+    for folder, dirs, files in os.walk(path, followlinks=False):
+        dirs[:] = [name for name in dirs if name not in SKIP_FOLDERS]
+        for name in files:
+            full = os.path.join(folder, name)
+            if (not name.startswith("._") and _category(name) in ("video", "audio")
+                    and not os.path.islink(full) and os.path.isfile(full)):
+                return True
+    return False
+
+
+def scan(root=None, exclude_paths=(), exclude_device_ids=(), *, destinations=()):
     """List candidate cards under the scan root."""
     root = root or SCAN_ROOT
     found = []
     problems = []
-    excluded = {storage.canonical(p) for p in exclude_paths}
-    excluded_devices = set(exclude_device_ids)
+    excluded = {storage.canonical(p): p for p in exclude_paths}
+    excluded.update((storage.canonical(d["path"]), d["label"]) for d in destinations)
+    excluded_devices = {device: device for device in exclude_device_ids}
+    excluded_devices.update((d["device_id"], d["label"]) for d in destinations
+                            if d["device_id"])
     if not os.path.isdir(root):
         return found, [f"Scan root is not mounted: {root}"]
     for name in sorted(os.listdir(root)):
@@ -216,10 +232,21 @@ def scan(root=None, exclude_paths=(), exclude_device_ids=()):
         if not os.path.isdir(path):
             continue
         real = storage.canonical(path)
-        if any(storage.paths_overlap(real, p) for p in excluded):
+        overlap = next((label for p, label in excluded.items()
+                        if storage.paths_overlap(real, p)), None)
+        if overlap is not None:
+            # A volume that is, or holds, a destination is one of today's
+            # drives, not a card. Every destination in /Volumes lands here on
+            # every scan once it holds footage, so reporting it would put a red
+            # line under the scan button for each drive, all day long.
             continue
         try:
-            if storage.inspect_path(real)["device_id"] in excluded_devices:
+            device = storage.inspect_path(real)["device_id"]
+            if device in excluded_devices:
+                if _has_media(real):
+                    label = excluded_devices[device]
+                    problems.append(f"{name}: skipped — it is on the same physical drive "
+                                    f"as destination {label}.")
                 continue
             item = inspect_volume(real)
         except (PermissionError, OSError, storage.StorageError) as exc:

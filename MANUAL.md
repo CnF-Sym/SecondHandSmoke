@@ -3,7 +3,7 @@
 
 *A CnF Works Project*
 
-Version 0.4.0 — read from the `VERSION` file at the repository root.
+Version 0.4.1 — read from the `VERSION` file at the repository root.
 `version.py` and the macOS build scripts both read that one file, so the
 number in the manual, in the app's Info.plist and in every MHL `<tool>`
 field cannot drift apart.
@@ -242,7 +242,14 @@ unavailable and the later phases say so.
 **The application.** Open the DMG, drag Second Hand Smoke to Applications,
 double-click. Python, Flask, xxhash, NumPy and Pillow are all inside the bundle;
 nothing is installed on the machine and there is no first-launch build step.
-`macos/README.md` describes how the bundle is put together and how to build it.
+For a release, run **Build Second Hand Smoke.command** to build, sign,
+notarize and staple the app. Then run **Make Second Hand Smoke DMG.command**
+to package that app, sign and notarize the image, and write the checksum
+after stapling. The full setup is in [`macos/README.md`](macos/README.md).
+
+Use **Reveal Server Log in Finder** in the app menu when troubleshooting.
+The log is `Second Hand Smoke/Logs/server.log` under the resolved
+`CnF-Libraries-Installs` folder, usually in your home folder.
 
 Three things behave differently in the application, all deliberately:
 
@@ -1152,8 +1159,8 @@ report and the format gate are untouched.
 | `watch_parent(interval)` | Exits if the launching application disappears |
 | `main()` | Locks, starts the watchdog, prints the banner, serves |
 
-`start.command` still runs `app.py` directly; this module is only the entry
-point used inside the application bundle. It adds no behaviour to the offload.
+`start.command` runs `app.py` directly, which claims the same catalog lock
+before initialization. The packaged server also starts the parent watchdog.
 
 ### `destinations.py` — attaching a drive to a day
 
@@ -1404,7 +1411,7 @@ offloads them, then deliberately changes the source and corrupts, truncates and
 deletes destination files to confirm each fault is caught. It never touches
 mounted media. Set `DIT_KEEP_TEST_RIG=1` to keep the temp folder for inspection.
 
-**40 sections and more than 550 checks**, covering: registration and
+**633 checks across 40 sections**, covering: registration and
 identity, the copy and verify path,
 corruption and rot, cancellation and resume for all four job types, the format
 gate, MHL and day report, metadata and sound reports, timecode sync across every
