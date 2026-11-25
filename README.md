@@ -18,7 +18,7 @@ dailies.
 It will not format a card, upload anything, phone home, or ask you for a
 licence key. It runs entirely on your machine, bound to loopback.
 
-> **Status: early public release.** This has done real shoot days, and the test
+> **Status: public beta.** This has done real shoot days, and the test
 > rig is thorough, but it has been used by a small number of people on a small
 > number of camera and recorder models. Run it alongside whatever you use now
 > for a shoot or two before you trust it alone. If it disagrees with your
@@ -137,12 +137,6 @@ than MD5, which is the entire job.
 > macOS `F_NOCACHE` flag, so Windows and Linux are not supported either; see
 > the roadmap for why that is a real blocker rather than a missing feature.
 >
-> **This build is not notarized.** macOS will refuse to open it on first
-> launch. Open it once from **Finder → right-click → Open**, and if macOS still
-> refuses, go to **System Settings → Privacy & Security** and press **Open
-> Anyway** next to the message about Second Hand Smoke. A managed work Mac may
-> forbid that override entirely, in which case this cannot be installed there.
->
 > **ffmpeg is not bundled.** Offload, verification, checksums, manifests, the
 > format gate and the library all work without it. Metadata, proxies, timecode
 > sync, waveform fallback and dailies do not, until you run
@@ -153,12 +147,17 @@ Download `SecondHandSmoke-<version>.dmg` from the
 and drag **Second Hand Smoke** to Applications. Double-click it. That is the
 whole installation — no Terminal, no Python to install, nothing to configure.
 
-**If macOS says the app is from an unidentified developer**, the build you have
-is not notarized. Right-click (or Control-click) the app in Applications and
-choose **Open**, then **Open** again in the dialog. macOS remembers the
-decision; every launch after that is an ordinary double-click. This is the same
-step every unsigned Mac app needs, and the reason it exists is worth knowing:
-Apple charges an annual fee for the certificate that removes it.
+The app and the disk image are signed with a Developer ID and notarized by
+Apple, so it opens like any other Mac app.
+
+**To check the download is intact**, compare it with the `.sha256` file on
+the same release page. In Terminal, from the folder you downloaded to:
+
+```bash
+shasum -a 256 -c SecondHandSmoke-<version>.dmg.sha256
+```
+
+It should print `OK`.
 
 **macOS will ask for permission to access removable volumes** the first time
 the app looks for a card. Say yes — reading cards is the entire job. If you say
@@ -786,7 +785,7 @@ the interface marks Phase 6 unavailable while every earlier phase still works.
 | 5 | Waveform cross-correlation fallback | **Done** |
 | 6 | Dailies export, Resolve handoff | **Done** |
 | 7 | The library — search, copy-count audit, export | **Done** |
-| — | A real card, a real shoot, a notarized build | **Next** |
+| — | A real card, a real shoot | **Next** |
 
 `ROADMAP.md` has the detail on where this goes next and what is deliberately
 out of scope.

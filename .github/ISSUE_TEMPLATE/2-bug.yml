@@ -1,0 +1,28 @@
+name: Something's broken
+description: A crash, an error, or something not doing what it says.
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Second Hand Smoke version
+      description: It's in the footer of the app, e.g. 0.4.1
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: e.g. MacBook Pro M3, macOS 15.2
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you were doing, what you expected, and what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Server log or screenshot
+      description: The app menu has Reveal Server Log in Finder. Never attach footage.

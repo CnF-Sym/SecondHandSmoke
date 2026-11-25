@@ -47,3 +47,6 @@ _BETA_FIXES_FOR_CHATGPT.md
 
 # Added by GYST cleanup (Nov 2026)
 .env
+_BETA_FIX_REPORT.md
+_history-backup-*.bundle
+Hide Old Commit Emails.command

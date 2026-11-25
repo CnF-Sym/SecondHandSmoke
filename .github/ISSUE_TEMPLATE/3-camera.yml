@@ -1,0 +1,24 @@
+name: My camera or recorder isn't detected right
+description: Cards that don't show up, wrong roll names, sound reports that don't parse.
+labels: ["camera coverage"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Camera or recorder model and firmware
+    validations:
+      required: true
+  - type: textarea
+    id: listing
+    attributes:
+      label: Card listing (names and sizes only, no footage)
+      description: |
+        In Terminal, with the card mounted:
+        `find /Volumes/YOUR_CARD -type f -exec ls -l {} \; > ~/Desktop/card-listing.txt`
+        then drag card-listing.txt in here.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What the app did

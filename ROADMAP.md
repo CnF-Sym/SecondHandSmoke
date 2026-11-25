@@ -28,9 +28,6 @@ The code is ahead of the release. What is missing is not features.
   the way the scanner expects, or that a 512 GB offload hits nothing a 24 KB
   fixture never could. This is the largest open question in the project and no
   amount of further code closes it.
-- **Notarize the build.** Ad-hoc signing means right-click → Open on first
-  launch. A Developer ID turns this from a repository into an application
-  somebody can install at 4am without thinking about it.
 - **Publish a release** people can download, with the manual and the rig's
   output beside it.
 - **Camera and recorder coverage**, driven by what people actually send in.

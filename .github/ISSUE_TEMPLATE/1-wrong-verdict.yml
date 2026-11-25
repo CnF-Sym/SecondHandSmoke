@@ -1,0 +1,41 @@
+name: It said a card was safe and it wasn't
+description: The most serious kind of bug. Everything else waits for this.
+title: "[Verdict] "
+labels: ["verification", "critical"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Don't format anything else until it's sorted out.
+        Please don't attach footage — names, sizes and reports are enough.
+  - type: input
+    id: version
+    attributes:
+      label: Second Hand Smoke version
+      description: It's in the footer of the app, e.g. 0.4.1
+    validations:
+      required: true
+  - type: input
+    id: camera
+    attributes:
+      label: Camera or recorder, and card type
+      placeholder: e.g. Sony FX9, CFexpress Type B
+    validations:
+      required: true
+  - type: input
+    id: drives
+    attributes:
+      label: Destination drives and how they're formatted
+      placeholder: e.g. 2x Samsung T7, APFS
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What the app said, and what turned out to be wrong with the copy.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Day report, manifest or server log
+      description: Drag files in. The log is under CnF-Libraries-Installs/Second Hand Smoke/Logs (the app menu has Reveal Server Log in Finder).
